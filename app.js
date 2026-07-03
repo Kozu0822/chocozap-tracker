@@ -96,6 +96,11 @@ document.addEventListener("DOMContentLoaded", () => {
   
   // 默认启动估算值计算
   updateCalorieEstimate();
+
+  // 如果配置了 GitHub Token，开机进行一次静默云同步，拉取最新记录
+  if (state.settings.githubToken) {
+    syncWithGithub(true);
+  }
 });
 
 // 从 LocalStorage 加载数据
@@ -110,7 +115,9 @@ function loadData() {
     state.settings = {
       weight: 70,
       apiKey: '',
-      apiModel: 'gemini-2.5-flash'
+      apiModel: 'gemini-2.5-flash',
+      githubToken: '',
+      githubGistId: ''
     };
     localStorage.setItem("chocozap_workouts", JSON.stringify(state.workouts));
     localStorage.setItem("chocozap_settings", JSON.stringify(state.settings));
@@ -125,7 +132,9 @@ function loadData() {
       state.settings = {
         weight: 70,
         apiKey: '',
-        apiModel: 'gemini-2.5-flash'
+        apiModel: 'gemini-2.5-flash',
+        githubToken: '',
+        githubGistId: ''
       };
       localStorage.setItem("chocozap_settings", JSON.stringify(state.settings));
     }
@@ -133,8 +142,25 @@ function loadData() {
   
   // 将设置数据反映到 UI 控件中
   document.getElementById("setting-weight").value = state.settings.weight;
-  document.getElementById("setting-api-key").value = state.settings.apiKey;
+  document.getElementById("setting-api-key").value = state.settings.apiKey || "";
   document.getElementById("setting-api-model").value = state.settings.apiModel || 'gemini-2.5-flash';
+  document.getElementById("setting-github-token").value = state.settings.githubToken || "";
+  document.getElementById("setting-github-gist-id").value = state.settings.githubGistId || "";
+
+  // 更新云同步配置状态文本
+  const syncStatus = document.getElementById("github-sync-status");
+  if (syncStatus) {
+    if (state.settings.githubToken && state.settings.githubGistId) {
+      syncStatus.textContent = "已关联云端存储";
+      syncStatus.style.color = "var(--neon-blue)";
+    } else if (state.settings.githubToken) {
+      syncStatus.textContent = "已配置Token，待首次同步";
+      syncStatus.style.color = "var(--text-secondary)";
+    } else {
+      syncStatus.textContent = "未配置同步";
+      syncStatus.style.color = "var(--text-secondary)";
+    }
+  }
 }
 
 // 辅助函数：生成过去某一天的 YYYY-MM-DD 字符串
@@ -528,6 +554,11 @@ function saveWorkout(event) {
   submitBtn.innerHTML = "🎉 打卡成功！";
   submitBtn.style.background = "linear-gradient(135deg, #39ff14, #00f0ff)";
   
+  // 如果配置了 GitHub Token，进行一次静默云同步，把新记录推上云端
+  if (state.settings.githubToken) {
+    syncWithGithub(true);
+  }
+
   setTimeout(() => {
     submitBtn.innerHTML = originalText;
     submitBtn.style.background = "";
@@ -543,6 +574,11 @@ function deleteWorkout(id) {
     localStorage.setItem("chocozap_workouts", JSON.stringify(state.workouts));
     renderHistory();
     updateStats();
+    
+    // 如果配置了 GitHub Token，进行静默云同步，同步删除操作到云端
+    if (state.settings.githubToken) {
+      syncWithGithub(true);
+    }
   }
 }
 
@@ -1100,14 +1136,33 @@ function saveSettings() {
   const weight = parseFloat(document.getElementById("setting-weight").value) || 70;
   const apiKey = document.getElementById("setting-api-key").value.trim();
   const apiModel = document.getElementById("setting-api-model").value;
+  const githubToken = document.getElementById("setting-github-token").value.trim();
+  const githubGistId = document.getElementById("setting-github-gist-id").value.trim();
   
   state.settings = {
     weight: weight,
     apiKey: apiKey,
-    apiModel: apiModel
+    apiModel: apiModel,
+    githubToken: githubToken,
+    githubGistId: githubGistId
   };
   
   localStorage.setItem("chocozap_settings", JSON.stringify(state.settings));
+
+  // 更新设置的同步文字
+  const syncStatus = document.getElementById("github-sync-status");
+  if (syncStatus) {
+    if (githubToken && githubGistId) {
+      syncStatus.textContent = "已关联云端存储";
+      syncStatus.style.color = "var(--neon-blue)";
+    } else if (githubToken) {
+      syncStatus.textContent = "已配置Token，待首次同步";
+      syncStatus.style.color = "var(--text-secondary)";
+    } else {
+      syncStatus.textContent = "未配置同步";
+      syncStatus.style.color = "var(--text-secondary)";
+    }
+  }
 }
 
 // 导出所有数据为 JSON 下载 (已剥离敏感 API Key 并确保安全传输)
@@ -1219,3 +1274,179 @@ window.addEventListener("resize", () => {
     }
   }, 250);
 });
+
+// ==========================================================================
+// 9. GitHub Gist 云端自动同步功能 (GitHub Gist Cloud Sync)
+// ==========================================================================
+async function syncWithGithub(isSilent = false) {
+  const token = state.settings.githubToken;
+  let gistId = state.settings.githubGistId;
+  
+  const syncBtn = document.getElementById("btn-github-sync");
+  const statusLabel = document.getElementById("github-sync-status");
+  
+  if (!token) {
+    if (!isSilent) {
+      alert("请先在设置中配置您的 GitHub Personal Access Token (PAT)！");
+      switchTab('settings');
+    }
+    return;
+  }
+  
+  // 更新 UI 状态
+  if (syncBtn) {
+    syncBtn.closest(".settings-action-row").classList.add("syncing");
+    syncBtn.disabled = true;
+    syncBtn.querySelector("span").textContent = "正在云同步...";
+  }
+  if (statusLabel) {
+    statusLabel.textContent = "正在连接 GitHub...";
+    statusLabel.style.color = "var(--text-secondary)";
+    statusLabel.style.textShadow = "none";
+  }
+  
+  const headers = {
+    "Authorization": `token ${token}`,
+    "Accept": "application/vnd.github.v3+json",
+    "Content-Type": "application/json"
+  };
+  
+  try {
+    // 1. 如果没有 Gist ID，先在云端全自动创建私有 Gist
+    if (!gistId) {
+      if (statusLabel) statusLabel.textContent = "正在创建私有云存储...";
+      
+      const createResponse = await fetch("https://api.github.com/gists", {
+        method: "POST",
+        headers: headers,
+        body: JSON.stringify({
+          description: "ChocoZAP Workout Tracker Cloud Sync Data",
+          public: false,
+          files: {
+            "chocozap_workouts.json": {
+              "content": "[]"
+            }
+          }
+        })
+      });
+      
+      if (!createResponse.ok) {
+        throw new Error(`创建 Gist 失败: ${createResponse.statusText} (错误码: ${createResponse.status})`);
+      }
+      
+      const gistData = await createResponse.json();
+      gistId = gistData.id;
+      
+      // 保存本地
+      state.settings.githubGistId = gistId;
+      localStorage.setItem("chocozap_settings", JSON.stringify(state.settings));
+      
+      const gistInput = document.getElementById("setting-github-gist-id");
+      if (gistInput) gistInput.value = gistId;
+      
+      if (statusLabel) statusLabel.textContent = "已成功创建并绑定私有云存储！";
+    }
+    
+    // 2. 从云端拉取已存在的数据
+    if (statusLabel) statusLabel.textContent = "正在拉取云端健身记录...";
+    const getResponse = await fetch(`https://api.github.com/gists/${gistId}`, {
+      method: "GET",
+      headers: headers
+    });
+    
+    if (getResponse.status === 404) {
+      // 说明绑定的 Gist 已经在 GitHub 上被删除了，需要清空本地 ID 并重试
+      state.settings.githubGistId = "";
+      localStorage.setItem("chocozap_settings", JSON.stringify(state.settings));
+      const gistInput = document.getElementById("setting-github-gist-id");
+      if (gistInput) gistInput.value = "";
+      throw new Error("云端绑定的存储已被删除，已为您重置。请重新点击同步以新建云存储！");
+    }
+    
+    if (!getResponse.ok) {
+      throw new Error(`获取云端数据失败: ${getResponse.statusText}`);
+    }
+    
+    const gistDetail = await getResponse.json();
+    const syncFile = gistDetail.files["chocozap_workouts.json"];
+    
+    let cloudWorkouts = [];
+    if (syncFile && syncFile.content) {
+      try {
+        cloudWorkouts = JSON.parse(syncFile.content);
+      } catch (e) {
+        cloudWorkouts = [];
+      }
+    }
+    
+    // 3. 执行无损去重新旧合并
+    if (statusLabel) statusLabel.textContent = "正在融合双端记录...";
+    const localWorkouts = state.workouts || [];
+    const mergedMap = new Map();
+    
+    // 放入云端数据
+    cloudWorkouts.forEach(w => mergedMap.set(w.id, w));
+    // 放入本地数据 (本地修改有更高保留优先权)
+    localWorkouts.forEach(w => mergedMap.set(w.id, w));
+    
+    const mergedList = Array.from(mergedMap.values()).sort((a, b) => new Date(b.date) - new Date(a.date));
+    
+    // 更新本地 state 和 localStorage
+    state.workouts = mergedList;
+    localStorage.setItem("chocozap_workouts", JSON.stringify(state.workouts));
+    
+    // 4. 将合并后的最新数据推回云端 Gist
+    if (statusLabel) statusLabel.textContent = "正在上传备份到云端...";
+    const patchResponse = await fetch(`https://api.github.com/gists/${gistId}`, {
+      method: "PATCH",
+      headers: headers,
+      body: JSON.stringify({
+        files: {
+          "chocozap_workouts.json": {
+            "content": JSON.stringify(state.workouts, null, 2)
+          }
+        }
+      })
+    });
+    
+    if (!patchResponse.ok) {
+      throw new Error(`上传云端备份失败: ${patchResponse.statusText}`);
+    }
+    
+    // 5. 同步成功，重绘界面与状态
+    const now = new Date();
+    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+    
+    if (statusLabel) {
+      statusLabel.textContent = `同步成功 (于 ${timeStr})`;
+      statusLabel.style.color = "var(--neon-green)";
+      statusLabel.style.textShadow = "0 0 8px rgba(57, 255, 20, 0.3)";
+    }
+    
+    // 刷新页面渲染
+    updateStats();
+    renderHistory();
+    
+    if (!isSilent) {
+      alert("🎉 双端数据云同步成功！打卡记录已无损合并。");
+    }
+    
+  } catch (error) {
+    console.error("Gist Sync Error: ", error);
+    if (statusLabel) {
+      statusLabel.textContent = `同步失败: ${error.message}`;
+      statusLabel.style.color = "var(--danger-color)";
+      statusLabel.style.textShadow = "none";
+    }
+    if (!isSilent) {
+      alert(`❌ 云同步失败：${error.message}`);
+    }
+  } finally {
+    // 恢复按钮 UI
+    if (syncBtn) {
+      syncBtn.closest(".settings-action-row").classList.remove("syncing");
+      syncBtn.disabled = false;
+      syncBtn.querySelector("span").textContent = "立即同步云端数据";
+    }
+  }
+}

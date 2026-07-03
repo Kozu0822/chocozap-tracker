@@ -540,6 +540,27 @@
           </div>
         </div>
 
+        <!-- GitHub 自动云端同步 -->
+        <div class="glass settings-card">
+          <h3>☁️ GitHub Pages 自动云同步</h3>
+          <p class="settings-desc">利用您已有的 GitHub 账号免费作为云数据库！配置后，手机和电脑端的数据会在保存或加载时自动、私密地合并同步。</p>
+          <div class="form-row">
+            <label>GitHub Personal Access Token (PAT) <small>—— 需要 gist 权限</small></label>
+            <input type="password" id="setting-github-token" placeholder="ghp_ 或 github_pat_..." class="glass-input" onchange="saveSettings()">
+          </div>
+          <div class="form-row">
+            <label>Gist 标识 (Gist ID) <small>—— 自动生成绑定</small></label>
+            <input type="text" id="setting-github-gist-id" placeholder="保存 Token 后同步会自动创建并绑定" class="glass-input" readonly>
+          </div>
+          <div class="settings-action-row">
+            <button class="btn btn-primary btn-sm btn-glowing-glow" id="btn-github-sync" onclick="syncWithGithub()">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="sync-icon-spin" id="sync-svg-icon"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+              <span>立即同步云端数据</span>
+            </button>
+            <span class="sync-status" id="github-sync-status" style="font-size: 11px; color: var(--text-secondary); align-self: center; margin-left: 10px;">未配置同步</span>
+          </div>
+        </div>
+
         <!-- 数据备份与迁移 -->
         <div class="glass settings-card">
           <h3>💾 数据导入与导出</h3>
