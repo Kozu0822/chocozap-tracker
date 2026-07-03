@@ -1353,9 +1353,40 @@ async function syncWithGithub(isSilent = false) {
   };
   
   try {
-    // 1. 如果没有 Gist ID，先在云端全自动创建私有 Gist
+    // 1. 如果本地没有绑定 Gist ID，先去云端搜索该账号下是否已经有已建好的 ChocoZAP 专属 Gist
     if (!gistId) {
-      if (statusLabel) statusLabel.textContent = "正在创建私有云存储...";
+      if (statusLabel) statusLabel.textContent = "正在云端检索已有存储...";
+      
+      try {
+        const gistsResponse = await fetch("https://api.github.com/gists", {
+          method: "GET",
+          headers: headers
+        });
+        
+        if (gistsResponse.ok) {
+          const gists = await gistsResponse.json();
+          // 查找是否有名为 "chocozap_workouts.json" 文件的 gist
+          const foundGist = gists.find(g => g.files && g.files["chocozap_workouts.json"]);
+          
+          if (foundGist) {
+            gistId = foundGist.id;
+            state.settings.githubGistId = gistId;
+            localStorage.setItem("chocozap_settings", JSON.stringify(state.settings));
+            
+            const gistInput = document.getElementById("setting-github-gist-id");
+            if (gistInput) gistInput.value = gistId;
+            
+            if (statusLabel) statusLabel.textContent = "已找到云端已有存储，正在绑定...";
+          }
+        }
+      } catch (err) {
+        console.warn("云端检索失败，将尝试直接新建: ", err);
+      }
+    }
+
+    // 2. 如果云端和本地确实都没有 Gist ID，说明是首次使用，创建全新的 Gist
+    if (!gistId) {
+      if (statusLabel) statusLabel.textContent = "正在创建全新私有云存储...";
       
       const createResponse = await fetch("https://api.github.com/gists", {
         method: "POST",
@@ -1459,7 +1490,7 @@ async function syncWithGithub(isSilent = false) {
     const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
     
     if (statusLabel) {
-      statusLabel.textContent = `同步成功 (于 ${timeStr})`;
+      statusLabel.textContent = `同步成功 (云端共 ${cloudWorkouts.length} 条记录，于 ${timeStr})`;
       statusLabel.style.color = "var(--neon-green)";
       statusLabel.style.textShadow = "0 0 8px rgba(57, 255, 20, 0.3)";
     }

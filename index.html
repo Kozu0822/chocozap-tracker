@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Noto+Sans+SC:wght@300;400;500;700;900&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=1.0.4">
 </head>
 <body>
   <!-- 动态流体液体背景 -->
@@ -550,7 +550,7 @@
           </div>
           <div class="form-row">
             <label>Gist 标识 (Gist ID) <small>—— 自动生成绑定</small></label>
-            <input type="text" id="setting-github-gist-id" placeholder="保存 Token 后同步会自动创建并绑定" class="glass-input" readonly>
+            <input type="text" id="setting-github-gist-id" placeholder="保存 Token 并同步会自动绑定，也可手动粘贴别人的 Gist ID" class="glass-input" onchange="saveSettings()">
           </div>
           <div class="settings-action-row">
             <button class="btn btn-primary btn-sm btn-glowing-glow" id="btn-github-sync" onclick="syncWithGithub()">
@@ -620,6 +620,6 @@
     </nav>
   </div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=1.0.4"></script>
 </body>
 </html>
