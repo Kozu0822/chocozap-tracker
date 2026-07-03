@@ -1110,12 +1110,16 @@ function saveSettings() {
   localStorage.setItem("chocozap_settings", JSON.stringify(state.settings));
 }
 
-// 导出所有数据为 JSON 下载
+// 导出所有数据为 JSON 下载 (已剥离敏感 API Key 并确保安全传输)
 function exportData() {
+  // 深度复制设置，并剔除敏感的 apiKey
+  const settingsToExport = { ...state.settings };
+  delete settingsToExport.apiKey;
+
   const dataStr = JSON.stringify({
     version: "1.0",
     workouts: state.workouts,
-    settings: state.settings
+    settings: settingsToExport
   }, null, 2);
   
   const blob = new Blob([dataStr], { type: "application/json" });
@@ -1133,7 +1137,7 @@ function exportData() {
   URL.revokeObjectURL(url);
 }
 
-// 导入 JSON 备份文件
+// 导入 JSON 备份文件 (已升级为无损双向合并算法，且强行保留本地已配置的 API Key)
 function importData(event) {
   const file = event.target.files[0];
   if (!file) return;
@@ -1144,20 +1148,38 @@ function importData(event) {
       const data = JSON.parse(e.target.result);
       
       if (Array.isArray(data.workouts)) {
-        state.workouts = data.workouts;
+        // 无损去重合并算法：基于 ID 合并本地和导入的数据
+        const localWorkouts = state.workouts || [];
+        const importedWorkouts = data.workouts || [];
+        
+        const mergedMap = new Map();
+        // 放入导入的历史记录
+        importedWorkouts.forEach(w => mergedMap.set(w.id, w));
+        // 放入本地已有的记录 (若有冲突，本地最新记录优先)
+        localWorkouts.forEach(w => mergedMap.set(w.id, w));
+        
+        // 转回数组并按日期从新到旧排序
+        const mergedList = Array.from(mergedMap.values()).sort((a, b) => new Date(b.date) - new Date(a.date));
+        
+        state.workouts = mergedList;
         localStorage.setItem("chocozap_workouts", JSON.stringify(state.workouts));
         
         if (data.settings) {
-          state.settings = data.settings;
+          // 增量融合配置，保留本地已有的 API key
+          state.settings = {
+            ...state.settings,
+            ...data.settings,
+            apiKey: state.settings.apiKey // 强行保留本地已配置的 Key
+          };
           localStorage.setItem("chocozap_settings", JSON.stringify(state.settings));
           
           // 更新设置界面
           document.getElementById("setting-weight").value = state.settings.weight;
-          document.getElementById("setting-api-key").value = state.settings.apiKey;
+          document.getElementById("setting-api-key").value = state.settings.apiKey || "";
           document.getElementById("setting-api-model").value = state.settings.apiModel || 'gemini-2.5-flash';
         }
         
-        alert("🎉 数据导入成功！所有打卡历史已恢复。");
+        alert("🎉 数据合并导入成功！电脑与手机的数据已完美融合。");
         // 刷新
         updateStats();
         renderHistory();
