@@ -1249,18 +1249,59 @@ function importData(event) {
   reader.readAsText(file);
 }
 
-// 清空重置数据库
-function resetDatabase() {
-  if (confirm("🚨 警告：这会清空你本地存储的全部健身打卡数据！确定要继续吗？")) {
-    if (confirm("再一次确认：确定要彻底清除数据吗？（保留您的 API Key 和体重配置，仅清空打卡历史记录）")) {
-      // 仅清空历史打卡，并保持 has_run_before 状态，防止重新加载时写入 mock 数据
-      localStorage.setItem("chocozap_workouts", JSON.stringify([]));
-      localStorage.setItem("chocozap_has_run_before", "true");
-      
-      // 重新加载页面刷新至最空状态
-      location.reload();
+// 清空重置数据库 (已升级为双向同步清空：若开启了云同步，将同步清空 GitHub 云端，防止刷新后从云端重新拉回)
+async function resetDatabase() {
+  if (!confirm("🚨 警告：这会清空你本地存储的全部健身打卡数据！确定要继续吗？")) {
+    return;
+  }
+  if (!confirm("再一次确认：确定要彻底清除数据吗？（保留您的 API Key 和体重配置，仅清空本地和云端的打卡历史记录）")) {
+    return;
+  }
+
+  const token = state.settings.githubToken;
+  const gistId = state.settings.githubGistId;
+
+  // 1. 如果已配置云端同步，必须发送请求清空 GitHub Gist 云端数据，否则刷新后会自动拉回
+  if (token && gistId) {
+    const resetBtn = document.querySelector(".settings-card.border-danger .btn-danger");
+    const originalText = resetBtn ? resetBtn.innerHTML : "";
+    if (resetBtn) {
+      resetBtn.disabled = true;
+      resetBtn.innerHTML = "⌛ 正在同步清空云端...";
+    }
+
+    try {
+      const response = await fetch(`https://api.github.com/gists/${gistId}`, {
+        method: "PATCH",
+        headers: {
+          "Authorization": `token ${token}`,
+          "Accept": "application/vnd.github.v3+json",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          files: {
+            "chocozap_workouts.json": {
+              "content": "[]"
+            }
+          }
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error("云端数据更新失败");
+      }
+    } catch (e) {
+      console.error("Failed to clear cloud Gist: ", e);
+      alert("⚠️ 清空 GitHub 云端数据失败，将仅清空本地数据。错误: " + e.message);
     }
   }
+
+  // 2. 清空本地历史，并保持 has_run_before 状态，防止重新加载时写入 mock 数据
+  localStorage.setItem("chocozap_workouts", JSON.stringify([]));
+  localStorage.setItem("chocozap_has_run_before", "true");
+  
+  // 3. 重新加载页面刷新至最空状态
+  location.reload();
 }
 
 // 监听窗口尺寸变化，重绘图表确保自适应宽度
