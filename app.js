@@ -1042,10 +1042,9 @@ ${gymDataPrompt}
             parts: [{ text: apiMessageContext }]
           }
         ],
-        // 可选：添加一些参数稳定输出
+        // 移除 maxOutputTokens 限制，让模型自主完整回答
         generationConfig: {
-          temperature: 0.7,
-          maxOutputTokens: 1500
+          temperature: 0.7
         }
       })
     });
@@ -1055,8 +1054,9 @@ ${gymDataPrompt}
     // 移除正在思考的临时泡泡
     removeMessage(tempBubbleId);
     
-    if (response.ok && data.candidates && data.candidates[0].content.parts[0].text) {
-      const replyText = data.candidates[0].content.parts[0].text;
+    if (response.ok && data.candidates && data.candidates[0].content && data.candidates[0].content.parts) {
+      // 无损拼接所有 parts 的 text，防止多 part 返回时导致的话语中途截断
+      const replyText = data.candidates[0].content.parts.map(part => part.text || "").join("");
       appendMessage("ai", "Gemini Coach", replyText);
     } else {
       // 捕获 API 内部错误
