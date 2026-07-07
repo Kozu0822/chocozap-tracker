@@ -149,6 +149,23 @@
           <div class="ai-rec-list" id="ai-recommendation-list"></div>
         </div>
 
+        <!-- 调整 AI 推荐 弹窗 -->
+        <div class="dialog-overlay" id="adjust-rec-dialog" style="display: none;">
+          <div class="glass dialog-box">
+            <div class="dialog-header">
+              <h3 id="adjust-rec-dialog-title">调整推荐</h3>
+              <button class="dialog-close-btn" onclick="closeAdjustRecDialog()">×</button>
+            </div>
+            <div class="dialog-body" id="adjust-rec-fields">
+              <!-- 由 JS 根据推荐项目类型动态渲染字段 -->
+            </div>
+            <div class="dialog-footer">
+              <button class="btn btn-primary" onclick="saveAdjustedRecommendation()">保存调整</button>
+              <button class="btn btn-secondary" onclick="closeAdjustRecDialog()">取消</button>
+            </div>
+          </div>
+        </div>
+
         <!-- 常用器材快捷键 -->
         <div class="quick-start-section">
           <h3>快捷开始</h3>
@@ -197,6 +214,10 @@
           <div class="exercise-pill" data-type="preacher_curl">
             <span class="ex-icon">🧘</span>
             <span class="ex-name">牧师椅</span>
+          </div>
+          <div class="exercise-pill" data-type="lat_pulldown">
+            <span class="ex-icon">🔽</span>
+            <span class="ex-name">高位下拉</span>
           </div>
           <div class="exercise-pill" data-type="spin_bike">
             <span class="ex-icon">🚴</span>
@@ -512,6 +533,7 @@
               <option value="shoulder_press">💪 肩推</option>
               <option value="chest_press">🏋️ 胸推</option>
               <option value="preacher_curl">🧘 牧师椅</option>
+              <option value="lat_pulldown">🔽 高位下拉</option>
               <option value="spin_bike">🚴 动感单车</option>
               <option value="treadmill">🏃 跑步机</option>
               <option value="situps">🧗 仰卧起坐</option>

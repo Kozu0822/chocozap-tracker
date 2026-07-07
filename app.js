@@ -25,11 +25,21 @@ const EQUIPMENT_ROSTER = [
   { type: "shoulder_press", label: "肩推 (Shoulder Press)", note: "力量训练，练肩部" },
   { type: "chest_press", label: "胸推 (Chest Press)", note: "力量训练，练胸部" },
   { type: "preacher_curl", label: "牧师椅 (Preacher Curl)", note: "力量训练，练肱二头肌" },
+  { type: "lat_pulldown", label: "高位下拉 (Lat Pulldown)", note: "力量训练，练背部" },
   { type: "situps", label: "仰卧起坐 (Sit-ups)", note: "核心训练" },
   { type: "spin_bike", label: "动感单车 (Spin Bike)", note: "有氧训练" },
   { type: "treadmill", label: "跑步机 (Treadmill)", note: "有氧训练" },
   { type: "massage_chair", label: "按摩椅 (Massage Chair)", note: "拉伸放松，非力量/有氧训练" }
 ];
+
+// ChocoZAP 力量器械配重片的最小调整单位 (kg)，不支持 2.5kg 这种半档
+const WEIGHT_STEP_KG = 5;
+
+// 把重量取整到最近的 step 的整数倍 (用于兜底 AI 给出不合法的重量数值，如 2.5kg 的半档)
+function roundToNearestStep(value, step) {
+  const num = parseFloat(value) || 0;
+  return Math.max(0, Math.round(num / step) * step);
+}
 
 // 每种类型打卡记录所需的必填字段，用于校验 AI 结构化训练推荐数据是否可直接落地为打卡记录
 const WORKOUT_REQUIRED_FIELDS = {
@@ -37,6 +47,7 @@ const WORKOUT_REQUIRED_FIELDS = {
   shoulder_press: ['weight', 'reps', 'sets'],
   chest_press: ['weight', 'reps', 'sets'],
   preacher_curl: ['weight', 'reps', 'sets'],
+  lat_pulldown: ['weight', 'reps', 'sets'],
   situps: ['reps', 'sets'],
   spin_bike: ['resistance', 'time'],
   treadmill: ['mode', 'speed', 'incline', 'time'],
@@ -466,6 +477,23 @@ function setupFormForType(type) {
       }
       break;
 
+    case 'lat_pulldown':
+      formTitle.textContent = "高位下拉 (Lat Pulldown)";
+      formBadge.textContent = "力量训练";
+      document.getElementById("group-strength").style.display = "block";
+      if (lastWorkout && lastWorkout.details) {
+        document.getElementById("input-weight").value = lastWorkout.details.weight;
+        document.getElementById("input-reps").value = lastWorkout.details.reps;
+        document.getElementById("input-sets").value = lastWorkout.details.sets;
+        document.getElementById("input-extra-reps").value = lastWorkout.details.extraReps || "";
+      } else {
+        document.getElementById("input-weight").value = 35;
+        document.getElementById("input-reps").value = 12;
+        document.getElementById("input-sets").value = 3;
+        document.getElementById("input-extra-reps").value = "";
+      }
+      break;
+
     case 'situps':
       formTitle.textContent = "仰卧起坐 (Sit-ups)";
       formBadge.textContent = "腰腹核心";
@@ -617,7 +645,7 @@ function saveWorkout(event) {
   let details = {};
   
   // 提取对应表单参数
-  if (['leg_press', 'shoulder_press', 'chest_press', 'preacher_curl'].includes(type)) {
+  if (['leg_press', 'shoulder_press', 'chest_press', 'preacher_curl', 'lat_pulldown'].includes(type)) {
     details = {
       weight: parseFloat(document.getElementById("input-weight").value) || 0,
       reps: parseInt(document.getElementById("input-reps").value) || 0,
@@ -784,7 +812,7 @@ function updateStats() {
 }
 
 // 力量训练 vs 有氧训练的类型分类，供趋势分析和统计使用
-const STRENGTH_TYPES = ['leg_press', 'shoulder_press', 'chest_press', 'preacher_curl', 'situps'];
+const STRENGTH_TYPES = ['leg_press', 'shoulder_press', 'chest_press', 'preacher_curl', 'lat_pulldown', 'situps'];
 const CARDIO_TYPES = ['treadmill', 'spin_bike'];
 
 // 趋势分析模块：最近30天力量/有氧/其他占比 + 最近4周力量容量与有氧时长趋势
@@ -1069,6 +1097,11 @@ function renderHistory() {
           title = "牧师椅 (Preacher Curl)";
           stats = `${item.details.weight}kg × ${item.details.reps}次 × ${item.details.sets}组` + (item.details.extraReps ? ` (+组外${item.details.extraReps}次)` : "");
           break;
+        case 'lat_pulldown':
+          icon = "🔽";
+          title = "高位下拉 (Lat Pulldown)";
+          stats = `${item.details.weight}kg × ${item.details.reps}次 × ${item.details.sets}组` + (item.details.extraReps ? ` (+组外${item.details.extraReps}次)` : "");
+          break;
         case 'situps':
           icon = "🧗";
           title = "仰卧起坐 (Sit-ups)";
@@ -1140,6 +1173,8 @@ ${equipmentListStr}
 
 请严格注意：你所有的训练建议、动作推荐，必须只从上面这份器材清单里选择。ChocoZAP 是一家小型 24 小时便利健身房，没有杠铃深蹲架、龙门架、壶铃、单杠等常见大型健身房器械，所以请不要提及或推荐清单之外的动作和器材。如果某个训练目标（比如练背、练腿弯举）在清单里没有直接对应的器材，请从清单中挑选功能最相近的替代动作，并说明这是替代方案。
 
+另外请注意：ChocoZAP 的力量训练器械（腿举、肩推、胸推、牧师椅、高位下拉）配重片只能以 5kg 为最小单位调整，不支持 2.5kg 这种半档，所以你给出的所有重量建议必须是 5 的整数倍（如 20kg、25kg、30kg），不要出现 2.5kg 的倍数。
+
 【我的个人档案】
 - 体重: ${weight} kg
 
@@ -1155,6 +1190,7 @@ ${equipmentListStr}
         shoulder_press: "肩推 (力量)",
         chest_press: "胸推 (力量)",
         preacher_curl: "牧师椅二头弯举 (力量)",
+        lat_pulldown: "高位下拉 (力量)",
         situps: "仰卧起坐 (核心)",
         spin_bike: "动感单车 (有氧)",
         treadmill: "跑步机 (有氧)",
@@ -1163,7 +1199,7 @@ ${equipmentListStr}
       }[w.type] || "其他";
 
       let detailsStr = "";
-      if (['leg_press', 'shoulder_press', 'chest_press', 'preacher_curl'].includes(w.type)) {
+      if (['leg_press', 'shoulder_press', 'chest_press', 'preacher_curl', 'lat_pulldown'].includes(w.type)) {
         detailsStr = `${w.details.weight}kg x ${w.details.reps}次 x ${w.details.sets}组` + (w.details.extraReps ? ` + 组外${w.details.extraReps}次` : "");
       } else if (w.type === 'situps') {
         detailsStr = `${w.details.reps}次 x ${w.details.sets}组` + (w.details.extraReps ? ` + 组外${w.details.extraReps}次` : "");
@@ -1266,7 +1302,7 @@ function renderAiRecommendations() {
   section.style.display = "block";
 
   const iconMap = {
-    leg_press: "🦵", shoulder_press: "💪", chest_press: "🏋️", preacher_curl: "🧘",
+    leg_press: "🦵", shoulder_press: "💪", chest_press: "🏋️", preacher_curl: "🧘", lat_pulldown: "🔽",
     situps: "🧗", spin_bike: "🚴", treadmill: "🏃", massage_chair: "💆", custom: "⚙️"
   };
 
@@ -1281,10 +1317,288 @@ function renderAiRecommendations() {
       </div>
       <div class="ai-rec-actions">
         <button class="ai-rec-btn ai-rec-accept" onclick="acceptAiRecommendation('${rec.id}')" title="完成并打卡">✓ 完成</button>
+        <button class="ai-rec-btn ai-rec-adjust" onclick="openAdjustRecDialog('${rec.id}')" title="调整强度/组数后再完成">✎ 调整</button>
         <button class="ai-rec-btn ai-rec-reject" onclick="rejectAiRecommendation('${rec.id}')" title="不需要这条推荐">✕ 拒绝</button>
       </div>
     </div>
   `).join('');
+}
+
+// ==========================================================================
+// 7.3 调整 AI 推荐：完成前允许修改强度(重量)/组数/组外次数等参数
+// ==========================================================================
+let adjustingRecId = null;
+
+// 力量类项目 (含重量) 统一走这一套字段；ChocoZAP 配重只能以 5kg 为单位，
+// 所以这里的步进器只给 ±5，不提供 ±1，从 UI 层面就避免调出不合法的重量
+function buildStrengthAdjustFields(d) {
+  const weight = roundToNearestStep(d.weight, WEIGHT_STEP_KG) || WEIGHT_STEP_KG;
+  return `
+    <div class="form-row">
+      <label>重量 (kg) <small>—— ChocoZAP 器械以 5kg 为单位调整</small></label>
+      <div class="stepper-input">
+        <button type="button" class="step-btn decrease" onclick="adjustValue('adjust-weight', -${WEIGHT_STEP_KG})">-5</button>
+        <input type="number" id="adjust-weight" value="${weight}" min="0" max="300" step="${WEIGHT_STEP_KG}">
+        <button type="button" class="step-btn increase" onclick="adjustValue('adjust-weight', ${WEIGHT_STEP_KG})">+5</button>
+      </div>
+    </div>
+    <div class="form-row-grid">
+      <div class="form-row">
+        <label>每组次数</label>
+        <div class="stepper-input">
+          <button type="button" class="step-btn decrease" onclick="adjustValue('adjust-reps', -1)">-</button>
+          <input type="number" id="adjust-reps" value="${d.reps || 12}" min="1" max="100">
+          <button type="button" class="step-btn increase" onclick="adjustValue('adjust-reps', 1)">+</button>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>组数</label>
+        <div class="stepper-input">
+          <button type="button" class="step-btn decrease" onclick="adjustValue('adjust-sets', -1)">-</button>
+          <input type="number" id="adjust-sets" value="${d.sets || 3}" min="1" max="20">
+          <button type="button" class="step-btn increase" onclick="adjustValue('adjust-sets', 1)">+</button>
+        </div>
+      </div>
+    </div>
+    <div class="form-row">
+      <label>组外次数 <small>—— 可选，正式组数之外力竭/额外加练的次数</small></label>
+      <div class="stepper-input">
+        <button type="button" class="step-btn decrease" onclick="adjustValue('adjust-extra-reps', -1)">-</button>
+        <input type="number" id="adjust-extra-reps" value="${d.extraReps || ''}" placeholder="0" min="0" max="100">
+        <button type="button" class="step-btn increase" onclick="adjustValue('adjust-extra-reps', 1)">+</button>
+      </div>
+    </div>
+  `;
+}
+
+function buildSitupsAdjustFields(d) {
+  return `
+    <div class="form-row-grid">
+      <div class="form-row">
+        <label>每组次数</label>
+        <div class="stepper-input">
+          <button type="button" class="step-btn decrease" onclick="adjustValue('adjust-reps', -5)">-5</button>
+          <input type="number" id="adjust-reps" value="${d.reps || 15}" min="1" max="200">
+          <button type="button" class="step-btn increase" onclick="adjustValue('adjust-reps', 5)">+5</button>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>组数</label>
+        <div class="stepper-input">
+          <button type="button" class="step-btn decrease" onclick="adjustValue('adjust-sets', -1)">-</button>
+          <input type="number" id="adjust-sets" value="${d.sets || 3}" min="1" max="20">
+          <button type="button" class="step-btn increase" onclick="adjustValue('adjust-sets', 1)">+</button>
+        </div>
+      </div>
+    </div>
+    <div class="form-row">
+      <label>组外次数 <small>—— 可选</small></label>
+      <div class="stepper-input">
+        <button type="button" class="step-btn decrease" onclick="adjustValue('adjust-extra-reps', -1)">-</button>
+        <input type="number" id="adjust-extra-reps" value="${d.extraReps || ''}" placeholder="0" min="0" max="200">
+        <button type="button" class="step-btn increase" onclick="adjustValue('adjust-extra-reps', 1)">+</button>
+      </div>
+    </div>
+  `;
+}
+
+function buildSpinBikeAdjustFields(d) {
+  return `
+    <div class="form-row-grid">
+      <div class="form-row">
+        <label>阻力档位 (1-24)</label>
+        <div class="stepper-input">
+          <button type="button" class="step-btn decrease" onclick="adjustValue('adjust-resistance', -1)">-</button>
+          <input type="number" id="adjust-resistance" value="${d.resistance || 8}" min="1" max="24">
+          <button type="button" class="step-btn increase" onclick="adjustValue('adjust-resistance', 1)">+</button>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>骑行时长 (分钟)</label>
+        <div class="stepper-input">
+          <button type="button" class="step-btn decrease" onclick="adjustValue('adjust-time', -5)">-5</button>
+          <input type="number" id="adjust-time" value="${d.time || 20}" min="1" max="180">
+          <button type="button" class="step-btn increase" onclick="adjustValue('adjust-time', 5)">+5</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function buildTreadmillAdjustFields(d) {
+  const mode = d.mode === 'run' ? 'run' : 'walk';
+  return `
+    <div class="form-row">
+      <label>运动类型</label>
+      <div class="segmented-control">
+        <label class="segment-item">
+          <input type="radio" name="adjust-treadmill-mode" value="walk" ${mode === 'walk' ? 'checked' : ''}>
+          <span>🚶 快走</span>
+        </label>
+        <label class="segment-item">
+          <input type="radio" name="adjust-treadmill-mode" value="run" ${mode === 'run' ? 'checked' : ''}>
+          <span>🏃 跑步</span>
+        </label>
+      </div>
+    </div>
+    <div class="form-row-grid">
+      <div class="form-row">
+        <label>速度 (km/h)</label>
+        <div class="stepper-input">
+          <button type="button" class="step-btn decrease" onclick="adjustValue('adjust-speed', -0.5)">-</button>
+          <input type="number" id="adjust-speed" value="${d.speed || 6}" min="2" max="20" step="0.5">
+          <button type="button" class="step-btn increase" onclick="adjustValue('adjust-speed', 0.5)">+</button>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>坡度 (%)</label>
+        <div class="stepper-input">
+          <button type="button" class="step-btn decrease" onclick="adjustValue('adjust-incline', -1)">-</button>
+          <input type="number" id="adjust-incline" value="${d.incline || 0}" min="0" max="15">
+          <button type="button" class="step-btn increase" onclick="adjustValue('adjust-incline', 1)">+</button>
+        </div>
+      </div>
+    </div>
+    <div class="form-row">
+      <label>时长 (分钟)</label>
+      <div class="stepper-input">
+        <button type="button" class="step-btn decrease" onclick="adjustValue('adjust-time', -5)">-5</button>
+        <input type="number" id="adjust-time" value="${d.time || 30}" min="1" max="180">
+        <button type="button" class="step-btn increase" onclick="adjustValue('adjust-time', 5)">+5</button>
+      </div>
+    </div>
+  `;
+}
+
+function buildMassageChairAdjustFields(d) {
+  return `
+    <div class="form-row">
+      <label>按摩模式</label>
+      <input type="text" id="adjust-massage-mode" value="${d.mode || '自动舒缓'}" class="glass-input">
+    </div>
+    <div class="form-row-grid">
+      <div class="form-row">
+        <label>按摩时长 (分钟)</label>
+        <div class="stepper-input">
+          <button type="button" class="step-btn decrease" onclick="adjustValue('adjust-duration', -15)">-15</button>
+          <input type="number" id="adjust-duration" value="${d.duration || 30}" min="15" max="120">
+          <button type="button" class="step-btn increase" onclick="adjustValue('adjust-duration', 15)">+15</button>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>强度级别 (1弱 / 2中 / 3强)</label>
+        <div class="stepper-input">
+          <button type="button" class="step-btn decrease" onclick="adjustValue('adjust-intensity', -1)">-</button>
+          <input type="number" id="adjust-intensity" value="${d.intensity || 2}" min="1" max="3">
+          <button type="button" class="step-btn increase" onclick="adjustValue('adjust-intensity', 1)">+</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function buildCustomAdjustFields(rec, d) {
+  return `
+    <div class="form-row">
+      <label>项目名称</label>
+      <input type="text" id="adjust-custom-name" value="${rec.label || ''}" class="glass-input">
+    </div>
+    <div class="form-row-grid">
+      <div class="form-row">
+        <label>关键数据 (如重量/次数)</label>
+        <input type="text" id="adjust-custom-value" value="${(d && d.value) || rec.intensity || ''}" class="glass-input">
+      </div>
+      <div class="form-row">
+        <label>组数 (非必填)</label>
+        <input type="number" id="adjust-custom-sets" value="${(d && d.sets) || ''}" class="glass-input" min="1">
+      </div>
+    </div>
+  `;
+}
+
+// 打开"调整"弹窗，根据推荐项目的类型动态渲染对应的可编辑字段
+function openAdjustRecDialog(id) {
+  const rec = state.aiRecommendations.find(r => r.id === id);
+  if (!rec) return;
+
+  adjustingRecId = id;
+  const d = rec.details && typeof rec.details === 'object' ? rec.details : {};
+  const fieldsContainer = document.getElementById("adjust-rec-fields");
+
+  const strengthTypes = ['leg_press', 'shoulder_press', 'chest_press', 'preacher_curl', 'lat_pulldown'];
+  if (strengthTypes.includes(rec.type)) {
+    fieldsContainer.innerHTML = buildStrengthAdjustFields(d);
+  } else if (rec.type === 'situps') {
+    fieldsContainer.innerHTML = buildSitupsAdjustFields(d);
+  } else if (rec.type === 'spin_bike') {
+    fieldsContainer.innerHTML = buildSpinBikeAdjustFields(d);
+  } else if (rec.type === 'treadmill') {
+    fieldsContainer.innerHTML = buildTreadmillAdjustFields(d);
+  } else if (rec.type === 'massage_chair') {
+    fieldsContainer.innerHTML = buildMassageChairAdjustFields(d);
+  } else {
+    fieldsContainer.innerHTML = buildCustomAdjustFields(rec, d);
+  }
+
+  document.getElementById("adjust-rec-dialog-title").textContent = `调整推荐：${rec.label}`;
+  document.getElementById("adjust-rec-dialog").style.display = "flex";
+}
+
+function closeAdjustRecDialog() {
+  document.getElementById("adjust-rec-dialog").style.display = "none";
+  adjustingRecId = null;
+}
+
+// 保存调整：根据当前弹窗里的字段读值，更新该条推荐的 details，并重新生成强度展示文字
+function saveAdjustedRecommendation() {
+  const rec = state.aiRecommendations.find(r => r.id === adjustingRecId);
+  if (!rec) { closeAdjustRecDialog(); return; }
+
+  const strengthTypes = ['leg_press', 'shoulder_press', 'chest_press', 'preacher_curl', 'lat_pulldown'];
+
+  if (strengthTypes.includes(rec.type)) {
+    const weight = roundToNearestStep(document.getElementById("adjust-weight").value, WEIGHT_STEP_KG);
+    const reps = parseInt(document.getElementById("adjust-reps").value) || 0;
+    const sets = parseInt(document.getElementById("adjust-sets").value) || 0;
+    const extraReps = parseInt(document.getElementById("adjust-extra-reps").value) || 0;
+    rec.details = { weight, reps, sets, extraReps };
+    rec.intensity = `${weight}kg x ${reps}次 x ${sets}组` + (extraReps ? ` + 组外${extraReps}次` : "");
+  } else if (rec.type === 'situps') {
+    const reps = parseInt(document.getElementById("adjust-reps").value) || 0;
+    const sets = parseInt(document.getElementById("adjust-sets").value) || 0;
+    const extraReps = parseInt(document.getElementById("adjust-extra-reps").value) || 0;
+    rec.details = { reps, sets, extraReps };
+    rec.intensity = `${reps}次 x ${sets}组` + (extraReps ? ` + 组外${extraReps}次` : "");
+  } else if (rec.type === 'spin_bike') {
+    const resistance = parseInt(document.getElementById("adjust-resistance").value) || 0;
+    const time = parseInt(document.getElementById("adjust-time").value) || 0;
+    rec.details = { resistance, time };
+    rec.intensity = `阻力${resistance}档，骑行${time}分钟`;
+  } else if (rec.type === 'treadmill') {
+    const mode = document.querySelector('input[name="adjust-treadmill-mode"]:checked').value;
+    const speed = parseFloat(document.getElementById("adjust-speed").value) || 0;
+    const incline = parseFloat(document.getElementById("adjust-incline").value) || 0;
+    const time = parseInt(document.getElementById("adjust-time").value) || 0;
+    rec.details = { mode, speed, incline, time };
+    rec.intensity = `${mode === 'walk' ? '快走' : '慢跑'} ${time}分钟，速度${speed}km/h，坡度${incline}%`;
+  } else if (rec.type === 'massage_chair') {
+    const mode = document.getElementById("adjust-massage-mode").value.trim() || '自动舒缓';
+    const duration = parseInt(document.getElementById("adjust-duration").value) || 30;
+    const intensity = parseInt(document.getElementById("adjust-intensity").value) || 2;
+    rec.details = { mode, duration, intensity };
+    rec.intensity = `${mode}，${duration}分钟，强度${intensity}`;
+  } else {
+    const name = document.getElementById("adjust-custom-name").value.trim() || rec.label;
+    const value = document.getElementById("adjust-custom-value").value.trim();
+    const sets = parseInt(document.getElementById("adjust-custom-sets").value) || null;
+    rec.label = name;
+    rec.details = { name, value, sets };
+    rec.intensity = value + (sets ? ` x ${sets}组` : "");
+  }
+
+  localStorage.setItem("chocozap_ai_recommendations", JSON.stringify(state.aiRecommendations));
+  closeAdjustRecDialog();
+  renderAiRecommendations();
 }
 
 // 点击"完成"：把推荐条目落地为一条今天的真实打卡记录
@@ -1309,6 +1623,10 @@ function acceptAiRecommendation(id) {
       value: rec.intensity || '',
       sets: (details && details.sets) || null
     };
+  } else if (WORKOUT_REQUIRED_FIELDS[type].includes('weight')) {
+    // ChocoZAP 的力量器械配重只能以 5kg 为单位调整，即使 AI 没听话给出了 2.5kg 的半档，
+    // 落地成打卡记录前也要强制取整，避免生成一条现实中根本调不出来的重量
+    details.weight = roundToNearestStep(details.weight, WEIGHT_STEP_KG);
   } else if (type === 'treadmill') {
     // 距离/卡路里统一由 App 按同一套公式计算，不采信 AI 自行估算的数值，保证口径一致
     const est = computeTreadmillEstimate(details.mode, details.speed, details.incline, details.time);
