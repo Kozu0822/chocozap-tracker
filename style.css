@@ -3,9 +3,11 @@
 :root {
   --bg-color: #07080d;
   --text-color: #ffffff;
-  --text-secondary: rgba(255, 255, 255, 0.6);
-  --text-muted: rgba(255, 255, 255, 0.35);
-  
+  /* 半透明"玻璃"表面统一用这个 RGB 三元组调配，日间模式只需翻转这一个变量 */
+  --surface-rgb: 255, 255, 255;
+  --text-secondary: rgba(var(--surface-rgb), 0.6);
+  --text-muted: rgba(var(--surface-rgb), 0.35);
+
   /* 品牌与霓虹发光色 */
   --chocozap-yellow: #ffd000;
   --chocozap-orange: #ff7300;
@@ -13,18 +15,49 @@
   --neon-green: #39ff14;
   --neon-purple: #ab47bc;
   --danger-color: #ff3b30;
-  
+
   /* 液体玻璃核心变量 */
-  --glass-bg: rgba(255, 255, 255, 0.04);
-  --glass-bg-hover: rgba(255, 255, 255, 0.08);
-  --glass-bg-active: rgba(255, 255, 255, 0.12);
-  --glass-border: 1px solid rgba(255, 255, 255, 0.09);
-  --glass-border-light: 1px solid rgba(255, 255, 255, 0.15);
+  --glass-bg: rgba(var(--surface-rgb), 0.04);
+  --glass-bg-hover: rgba(var(--surface-rgb), 0.08);
+  --glass-bg-active: rgba(var(--surface-rgb), 0.12);
+  --glass-border: 1px solid rgba(var(--surface-rgb), 0.09);
+  --glass-border-light: 1px solid rgba(var(--surface-rgb), 0.15);
   --glass-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.3);
-  --glass-inset-glow: inset 0 1px 1px rgba(255, 255, 255, 0.15), inset 0 -1px 1px rgba(0, 0, 0, 0.2);
-  
+  --glass-inset-glow: inset 0 1px 1px rgba(var(--surface-rgb), 0.15), inset 0 -1px 1px rgba(0, 0, 0, 0.2);
+
+  /* 外壳/导航栏材质与背景，日间模式需要整体翻转 */
+  --shell-bg: rgba(10, 11, 16, 0.45);
+  --nav-bg: rgba(10, 11, 16, 0.75);
+  --nav-bg-desktop: rgba(10, 11, 16, 0.55);
+  --deep-surface: #0f1015;
+  --liquid-bg-gradient: radial-gradient(circle at 50% 50%, #0d0f19 0%, #05060a 100%);
+  --blob-blend-mode: screen;
+  --blob-opacity: 0.45;
+
   --font-display: 'Outfit', 'Noto Sans SC', -apple-system, sans-serif;
   --font-body: 'Inter', 'Noto Sans SC', -apple-system, sans-serif;
+}
+
+/* ==========================================================================
+   日间模式 (Light Theme) —— 由 JS 在 <html> 上切换 data-theme 属性触发
+   ========================================================================== */
+:root[data-theme="light"] {
+  --bg-color: #f2f4fb;
+  --text-color: #171a29;
+  /* 玻璃卡片改用深色墨蓝调透明度叠加，模拟 iOS 日间毛玻璃材质 */
+  --surface-rgb: 23, 26, 41;
+
+  --glass-shadow: 0 12px 32px 0 rgba(60, 66, 100, 0.14);
+  --glass-inset-glow: inset 0 1px 1px rgba(255, 255, 255, 0.7), inset 0 -1px 1px rgba(60, 66, 100, 0.08);
+
+  --shell-bg: rgba(255, 255, 255, 0.55);
+  --nav-bg: rgba(255, 255, 255, 0.78);
+  --nav-bg-desktop: rgba(255, 255, 255, 0.65);
+  --deep-surface: #ffffff;
+
+  --liquid-bg-gradient: radial-gradient(circle at 50% 50%, #eef1fc 0%, #fdf3e7 100%);
+  --blob-blend-mode: multiply;
+  --blob-opacity: 0.5;
 }
 
 * {
@@ -57,7 +90,7 @@ body {
   width: 100vw;
   height: 100vh;
   z-index: -1;
-  background: radial-gradient(circle at 50% 50%, #0d0f19 0%, #05060a 100%);
+  background: var(--liquid-bg-gradient);
   overflow: hidden;
 }
 
@@ -65,8 +98,8 @@ body {
   position: absolute;
   border-radius: 50%;
   filter: blur(80px);
-  opacity: 0.45;
-  mix-blend-mode: screen;
+  opacity: var(--blob-opacity);
+  mix-blend-mode: var(--blob-blend-mode);
   animation-duration: 25s;
   animation-iteration-count: infinite;
   animation-timing-function: ease-in-out;
@@ -143,7 +176,7 @@ body {
   height: 100dvh;
   max-width: 100%;
   max-height: 100%;
-  background: rgba(10, 11, 16, 0.45);
+  background: var(--shell-bg);
   backdrop-filter: blur(25px) saturate(185%);
   -webkit-backdrop-filter: blur(25px) saturate(185%);
   border: none;
@@ -159,9 +192,9 @@ body {
     width: 430px;
     height: 880px;
     border-radius: 44px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(var(--surface-rgb), 0.12);
     box-shadow: 0 25px 60px -10px rgba(0, 0, 0, 0.7), 
-                inset 0 1px 2px rgba(255, 255, 255, 0.25);
+                inset 0 1px 2px rgba(var(--surface-rgb), 0.25);
     margin: 20px auto;
   }
 }
@@ -172,7 +205,7 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(var(--surface-rgb), 0.04);
   z-index: 10;
   flex-shrink: 0;
 }
@@ -193,7 +226,7 @@ body {
 }
 
 .logo-main {
-  color: #ffffff;
+  color: var(--text-color);
 }
 
 .logo-badge {
@@ -211,10 +244,35 @@ body {
   font-size: 12px;
   color: var(--text-secondary);
   font-weight: 500;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(var(--surface-rgb), 0.06);
   padding: 6px 12px;
   border-radius: 20px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(var(--surface-rgb), 0.05);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.theme-toggle-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1px solid rgba(var(--surface-rgb), 0.08);
+  background: rgba(var(--surface-rgb), 0.06);
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.theme-toggle-btn:hover {
+  background: rgba(var(--surface-rgb), 0.12);
+  transform: rotate(15deg);
 }
 
 /* 滚动内容区 */
@@ -279,7 +337,7 @@ body {
   left: 0;
   right: 0;
   height: 40%;
-  background: linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0) 100%);
+  background: linear-gradient(180deg, rgba(var(--surface-rgb),0.04) 0%, rgba(var(--surface-rgb),0) 100%);
   pointer-events: none;
   z-index: 1;
 }
@@ -325,19 +383,19 @@ body {
 }
 
 .btn-secondary {
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #ffffff;
+  background: rgba(var(--surface-rgb), 0.08);
+  border: 1px solid rgba(var(--surface-rgb), 0.1);
+  color: var(--text-color);
   backdrop-filter: blur(10px);
 }
 
 .btn-secondary:hover {
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(var(--surface-rgb), 0.14);
 }
 
 .btn-danger {
   background: linear-gradient(135deg, #ff453a, #ff9f0a);
-  color: #ffffff;
+  color: #ffffff; /* 纯色渐变背景，任何主题下都应保持白字对比度 */
 }
 
 .btn-danger:hover {
@@ -357,7 +415,7 @@ body {
   left: -50%;
   width: 200%;
   height: 200%;
-  background: radial-gradient(circle, rgba(255,255,255,0.2) 0%, rgba(255,255,255,0) 60%);
+  background: radial-gradient(circle, rgba(var(--surface-rgb),0.2) 0%, rgba(var(--surface-rgb),0) 60%);
   transform: rotate(30deg);
   transition: all 0.5s;
   opacity: 0;
@@ -406,8 +464,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(var(--surface-rgb), 0.05);
+  border: 1px solid rgba(var(--surface-rgb), 0.08);
 }
 
 .streak-icon {
@@ -451,7 +509,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: linear-gradient(135deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.02) 100%);
+  background: linear-gradient(135deg, rgba(var(--surface-rgb),0.06) 0%, rgba(var(--surface-rgb),0.02) 100%);
   padding: 24px !important;
 }
 
@@ -488,7 +546,7 @@ body {
   font-family: var(--font-display);
   font-size: 20px;
   font-weight: 700;
-  color: #ffffff;
+  color: var(--text-color);
   text-shadow: 0 0 10px rgba(255, 208, 0, 0.2);
 }
 
@@ -526,6 +584,242 @@ body {
   overflow: visible;
 }
 
+/* 力量/有氧趋势分析模块 */
+.trend-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.trend-proportion-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.trend-proportion-bar {
+  display: flex;
+  width: 100%;
+  height: 10px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(var(--surface-rgb), 0.06);
+}
+
+.trend-bar-segment {
+  height: 100%;
+  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.trend-bar-strength {
+  background: linear-gradient(90deg, var(--chocozap-yellow), var(--chocozap-orange));
+}
+
+.trend-bar-cardio {
+  background: linear-gradient(90deg, var(--neon-blue), #0066ff);
+}
+
+.trend-bar-other {
+  background: rgba(var(--surface-rgb), 0.25);
+}
+
+.trend-bar-empty {
+  background: rgba(var(--surface-rgb), 0.06);
+}
+
+.trend-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.trend-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.trend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.trend-dot-strength {
+  background: linear-gradient(90deg, var(--chocozap-yellow), var(--chocozap-orange));
+}
+
+.trend-dot-cardio {
+  background: linear-gradient(90deg, var(--neon-blue), #0066ff);
+}
+
+.trend-dot-other {
+  background: rgba(var(--surface-rgb), 0.35);
+}
+
+.trend-mini-charts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.trend-mini-chart-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.trend-mini-chart-title {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.trend-mini-bars {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px;
+  height: 90px;
+}
+
+.trend-mini-bar-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  height: 100%;
+}
+
+.trend-mini-bar-value {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  min-height: 12px;
+}
+
+.trend-mini-bar-track {
+  width: 100%;
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(var(--surface-rgb), 0.05);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.trend-mini-bar-fill {
+  width: 100%;
+  background: rgba(var(--surface-rgb), 0.25);
+  border-radius: 6px 6px 0 0;
+  transition: height 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.trend-mini-bar-fill.trend-mini-bar-current {
+  background: linear-gradient(180deg, var(--chocozap-yellow), var(--chocozap-orange));
+}
+
+.trend-mini-bar-label {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+/* Gemini 训练推荐模块 */
+.ai-recommendation-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ai-rec-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ai-rec-item {
+  padding: 14px !important;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ai-rec-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ai-rec-avatar {
+  font-size: 20px;
+  width: 40px;
+  height: 40px;
+  background: rgba(var(--surface-rgb), 0.04);
+  border: 1px solid rgba(var(--surface-rgb), 0.08);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.ai-rec-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ai-rec-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.ai-rec-intensity {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.ai-rec-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.ai-rec-btn {
+  border: none;
+  border-radius: 10px;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.ai-rec-accept {
+  background: linear-gradient(135deg, var(--neon-green), var(--neon-blue));
+  color: #07080d;
+}
+
+.ai-rec-accept:hover {
+  filter: brightness(1.08);
+}
+
+.ai-rec-reject {
+  background: rgba(var(--surface-rgb), 0.08);
+  color: var(--text-secondary);
+}
+
+.ai-rec-reject:hover {
+  background: rgba(255, 59, 48, 0.15);
+  color: var(--danger-color);
+}
+
 /* 快捷开始 */
 .quick-start-section h3 {
   font-size: 16px;
@@ -540,7 +834,7 @@ body {
 }
 
 .quick-btn {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(var(--surface-rgb), 0.03);
   border-radius: 18px;
   padding: 12px 6px;
   display: flex;
@@ -548,7 +842,7 @@ body {
   align-items: center;
   gap: 8px;
   cursor: pointer;
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(var(--surface-rgb), 0.04);
 }
 
 .quick-btn:hover {
@@ -605,8 +899,8 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(var(--surface-rgb), 0.04);
+  border: 1px solid rgba(var(--surface-rgb), 0.06);
   padding: 10px 16px;
   border-radius: 100px;
   cursor: pointer;
@@ -614,7 +908,7 @@ body {
 }
 
 .exercise-pill:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(var(--surface-rgb), 0.08);
 }
 
 .exercise-pill.active {
@@ -643,7 +937,7 @@ body {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 24px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid rgba(var(--surface-rgb), 0.05);
   padding-bottom: 12px;
 }
 
@@ -653,8 +947,8 @@ body {
   padding: 3px 8px;
   border-radius: 8px;
   text-transform: uppercase;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(var(--surface-rgb), 0.08);
+  border: 1px solid rgba(var(--surface-rgb), 0.1);
   color: var(--text-secondary);
 }
 
@@ -685,11 +979,11 @@ body {
 
 /* 液体磨砂输入框 */
 .glass-input, .glass-textarea {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(var(--surface-rgb), 0.03);
+  border: 1px solid rgba(var(--surface-rgb), 0.08);
   border-radius: 14px;
   padding: 12px 16px;
-  color: #ffffff;
+  color: var(--text-color);
   font-family: var(--font-body);
   font-size: 14px;
   outline: none;
@@ -699,7 +993,7 @@ body {
 
 .glass-input:focus, .glass-textarea:focus {
   border-color: rgba(255, 208, 0, 0.5);
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(var(--surface-rgb), 0.05);
   box-shadow: inset 0 2px 4px rgba(0,0,0,0.1), 0 0 12px rgba(255, 208, 0, 0.15);
 }
 
@@ -711,9 +1005,17 @@ input[type="date"].glass-input {
   appearance: none;
 }
 
+:root[data-theme="light"] input[type="date"].glass-input {
+  color-scheme: light;
+}
+
 input[type="date"].glass-input::-webkit-calendar-picker-indicator {
   cursor: pointer;
   filter: invert(0.8);
+}
+
+:root[data-theme="light"] input[type="date"].glass-input::-webkit-calendar-picker-indicator {
+  filter: none;
 }
 
 /* 玻璃下拉选择 */
@@ -725,16 +1027,17 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
 
 .glass-select-wrapper select {
   width: 100%;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(var(--surface-rgb), 0.04);
+  border: 1px solid rgba(var(--surface-rgb), 0.08);
   border-radius: 14px;
   padding: 12px 16px;
-  color: #ffffff;
+  color: var(--text-color);
   font-family: var(--font-body);
   font-size: 14px;
   outline: none;
   appearance: none;
   cursor: pointer;
+  color-scheme: dark;
   transition: all 0.3s;
 }
 
@@ -752,16 +1055,20 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
 }
 
 .glass-select-wrapper select option {
-  background: #0f1015;
-  color: #fff;
+  background: var(--deep-surface);
+  color: var(--text-color);
+}
+
+:root[data-theme="light"] .glass-select-wrapper select {
+  color-scheme: light;
 }
 
 /* 快捷加减组件器 (Stepper Component) */
 .stepper-input {
   display: flex;
   align-items: center;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(var(--surface-rgb), 0.03);
+  border: 1px solid rgba(var(--surface-rgb), 0.08);
   border-radius: 16px;
   padding: 4px;
   justify-content: space-between;
@@ -772,8 +1079,8 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
   height: 38px;
   border-radius: 12px;
   border: none;
-  background: rgba(255, 255, 255, 0.06);
-  color: #ffffff;
+  background: rgba(var(--surface-rgb), 0.06);
+  color: var(--text-color);
   font-size: 16px;
   font-weight: 700;
   cursor: pointer;
@@ -784,7 +1091,7 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
 }
 
 .step-btn:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(var(--surface-rgb), 0.12);
 }
 
 .step-btn:active {
@@ -794,7 +1101,7 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
 .step-btn.decrease-large, .step-btn.increase-large {
   font-size: 11px;
   font-weight: 500;
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(var(--surface-rgb), 0.02);
   color: var(--text-secondary);
 }
 
@@ -802,7 +1109,7 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
   width: 60px;
   border: none;
   background: transparent;
-  color: #ffffff;
+  color: var(--text-color);
   text-align: center;
   font-family: var(--font-display);
   font-size: 20px;
@@ -826,8 +1133,8 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
 }
 
 .preset-tag {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(var(--surface-rgb), 0.04);
+  border: 1px solid rgba(var(--surface-rgb), 0.06);
   color: var(--text-secondary);
   padding: 6px 12px;
   border-radius: 10px;
@@ -838,8 +1145,8 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
 }
 
 .preset-tag:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
+  background: rgba(var(--surface-rgb), 0.1);
+  color: var(--text-color);
 }
 
 /* 分段选择器 (Segmented Control) */
@@ -848,7 +1155,7 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
   background: rgba(0, 0, 0, 0.2);
   padding: 3px;
   border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(var(--surface-rgb), 0.04);
 }
 
 .segment-item {
@@ -876,9 +1183,9 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
 }
 
 .segment-item input:checked + span {
-  background: rgba(255, 255, 255, 0.1);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3), inset 0 1px 1px rgba(255,255,255,0.1);
-  color: #ffffff;
+  background: rgba(var(--surface-rgb), 0.1);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3), inset 0 1px 1px rgba(var(--surface-rgb),0.1);
+  color: var(--text-color);
   backdrop-filter: blur(10px);
 }
 
@@ -887,8 +1194,8 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
   display: flex;
   align-items: center;
   gap: 12px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(var(--surface-rgb), 0.03);
+  border: 1px solid rgba(var(--surface-rgb), 0.08);
   border-radius: 14px;
   padding: 8px 12px;
 }
@@ -896,7 +1203,7 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
 .slider-container input[type="range"] {
   flex: 1;
   appearance: none;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(var(--surface-rgb), 0.1);
   height: 6px;
   border-radius: 3px;
   outline: none;
@@ -907,7 +1214,7 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: #ffffff;
+  background: var(--text-color);
   cursor: pointer;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
@@ -916,7 +1223,7 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
   font-family: var(--font-display);
   font-size: 12px;
   font-weight: 700;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(var(--surface-rgb), 0.08);
   padding: 4px 8px;
   border-radius: 8px;
   white-space: nowrap;
@@ -1060,8 +1367,8 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
   font-size: 22px;
   width: 44px;
   height: 44px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(var(--surface-rgb), 0.04);
+  border: 1px solid rgba(var(--surface-rgb), 0.08);
   border-radius: 14px;
   display: flex;
   align-items: center;
@@ -1131,6 +1438,132 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
   height: 480px;
   padding: 0 !important;
   border-radius: 24px;
+  position: relative;
+  overflow: hidden;
+}
+
+.chat-toolbar {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(var(--surface-rgb), 0.06);
+  flex-shrink: 0;
+}
+
+.chat-toolbar-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(var(--surface-rgb), 0.05);
+  border: 1px solid rgba(var(--surface-rgb), 0.08);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.chat-toolbar-btn:hover {
+  background: rgba(var(--surface-rgb), 0.1);
+  color: var(--text-color);
+}
+
+/* 历史对话侧滑面板 */
+.chat-history-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 78%;
+  max-width: 280px;
+  background: var(--deep-surface);
+  border-left: 1px solid rgba(var(--surface-rgb), 0.1);
+  box-shadow: -10px 0 30px rgba(0, 0, 0, 0.35);
+  transform: translateX(100%);
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-history-panel.open {
+  transform: translateX(0);
+}
+
+.chat-history-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(var(--surface-rgb), 0.08);
+  font-size: 14px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.chat-history-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chat-history-item {
+  padding: 10px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid transparent;
+}
+
+.chat-history-item:hover {
+  background: rgba(var(--surface-rgb), 0.06);
+}
+
+.chat-history-item.active {
+  background: rgba(255, 208, 0, 0.1);
+  border: 1px solid rgba(255, 208, 0, 0.3);
+}
+
+.chat-history-item-title {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-history-item-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.chat-history-delete-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  font-size: 11px;
+}
+
+.chat-history-delete-btn:hover {
+  color: var(--danger-color);
+}
+
+.chat-history-empty {
+  padding: 20px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
 }
 
 .chat-messages {
@@ -1177,8 +1610,8 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
 
 .ai-bubble {
   align-self: flex-start;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(var(--surface-rgb), 0.05);
+  border: 1px solid rgba(var(--surface-rgb), 0.08);
   border-bottom-left-radius: 4px;
 }
 
@@ -1207,7 +1640,7 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
 
 /* 输入区域 */
 .chat-input-area {
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  border-top: 1px solid rgba(var(--surface-rgb), 0.05);
   padding: 16px;
   display: flex;
   flex-direction: column;
@@ -1273,7 +1706,7 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
 .dialog-close-btn {
   background: transparent;
   border: none;
-  color: #fff;
+  color: var(--text-color);
   font-size: 24px;
   cursor: pointer;
   padding: 0 4px;
@@ -1347,12 +1780,12 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
   padding: 6px 12px calc(6px + env(safe-area-inset-bottom)) 12px;
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid rgba(var(--surface-rgb), 0.08);
   border-radius: 0;
   z-index: 10;
   backdrop-filter: blur(40px) saturate(180%);
   -webkit-backdrop-filter: blur(40px) saturate(180%);
-  background: rgba(10, 11, 16, 0.75);
+  background: var(--nav-bg);
   box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.4);
   box-sizing: border-box;
 }
@@ -1426,8 +1859,8 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
     height: 85vh;
     min-height: 680px;
     border-radius: 32px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    box-shadow: 0 30px 70px rgba(0, 0, 0, 0.6), inset 0 1px 2px rgba(255, 255, 255, 0.2);
+    border: 1px solid rgba(var(--surface-rgb), 0.12);
+    box-shadow: 0 30px 70px rgba(0, 0, 0, 0.6), inset 0 1px 2px rgba(var(--surface-rgb), 0.2);
     margin: 0 auto;
     display: grid;
     grid-template-columns: 240px 1fr;
@@ -1448,8 +1881,8 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
     padding: 35px 18px;
     gap: 8px;
     border-top: none;
-    border-right: 1px solid rgba(255, 255, 255, 0.08);
-    background: rgba(10, 11, 16, 0.55);
+    border-right: 1px solid rgba(var(--surface-rgb), 0.08);
+    background: var(--nav-bg-desktop);
     border-radius: 32px 0 0 32px;
     box-shadow: none;
     backdrop-filter: none;
@@ -1471,7 +1904,7 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
     text-shadow: 0 0 12px rgba(255, 208, 0, 0.4);
   }
   .nav-logo .logo-main {
-    color: #ffffff;
+    color: var(--text-color);
   }
   .nav-logo .logo-badge {
     font-size: 10px;
@@ -1492,7 +1925,7 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
     border-radius: 14px;
   }
   .nav-item.active {
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(var(--surface-rgb), 0.06);
     color: var(--chocozap-yellow);
     transform: none;
   }
@@ -1507,7 +1940,7 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
   }
   .app-header {
     grid-area: header;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    border-bottom: 1px solid rgba(var(--surface-rgb), 0.05);
     padding: 16px 30px;
   }
   /* 隐藏桌面端顶部多余的 logo */
@@ -1608,19 +2041,19 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
     gap: 20px;
   }
   .history-day-group {
-    border-left: 2px solid rgba(255, 255, 255, 0.05);
+    border-left: 2px solid rgba(var(--surface-rgb), 0.05);
     padding-left: 24px;
     margin-left: 10px;
     position: relative;
   }
   .history-date-header {
     margin-left: -35px;
-    background: #0f1016;
+    background: var(--deep-surface);
     display: inline-block;
     padding: 6px 14px;
     border-radius: 10px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    color: #fff;
+    border: 1px solid rgba(var(--surface-rgb), 0.08);
+    color: var(--text-color);
     margin-bottom: 14px;
     font-size: 13px;
   }

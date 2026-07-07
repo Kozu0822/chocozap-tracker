@@ -12,7 +12,35 @@ let state = {
     apiKey: '',
     apiModel: 'gemini-2.5-flash'
   },
-  chatHistory: []
+  // AI 多会话聊天记录：[{ id, title, updatedAt, messages: [{role,name,text,time}] }]
+  chatSessions: [],
+  activeChatSessionId: null,
+  // AI 生成的训练推荐，展示在首页"Gemini的推荐"模块
+  aiRecommendations: []
+};
+
+// ChocoZAP 门店实际可用的器材清单，用于约束 AI 只推荐这些器材范围内的动作
+const EQUIPMENT_ROSTER = [
+  { type: "leg_press", label: "腿举 (Leg Press)", note: "力量训练，练下肢" },
+  { type: "shoulder_press", label: "肩推 (Shoulder Press)", note: "力量训练，练肩部" },
+  { type: "chest_press", label: "胸推 (Chest Press)", note: "力量训练，练胸部" },
+  { type: "preacher_curl", label: "牧师椅 (Preacher Curl)", note: "力量训练，练肱二头肌" },
+  { type: "situps", label: "仰卧起坐 (Sit-ups)", note: "核心训练" },
+  { type: "spin_bike", label: "动感单车 (Spin Bike)", note: "有氧训练" },
+  { type: "treadmill", label: "跑步机 (Treadmill)", note: "有氧训练" },
+  { type: "massage_chair", label: "按摩椅 (Massage Chair)", note: "拉伸放松，非力量/有氧训练" }
+];
+
+// 每种类型打卡记录所需的必填字段，用于校验 AI 结构化训练推荐数据是否可直接落地为打卡记录
+const WORKOUT_REQUIRED_FIELDS = {
+  leg_press: ['weight', 'reps', 'sets'],
+  shoulder_press: ['weight', 'reps', 'sets'],
+  chest_press: ['weight', 'reps', 'sets'],
+  preacher_curl: ['weight', 'reps', 'sets'],
+  situps: ['reps', 'sets'],
+  spin_bike: ['resistance', 'time'],
+  treadmill: ['mode', 'speed', 'incline', 'time'],
+  massage_chair: ['mode', 'duration', 'intensity']
 };
 
 // 预设 Mock 数据以便第一次打开时拥有绝佳的视觉体验 (若 LocalStorage 为空)
@@ -85,14 +113,18 @@ const initialMockWorkouts = [
 // 初始化加载
 document.addEventListener("DOMContentLoaded", () => {
   refreshHeaderDate();
+  syncThemeToggleIcon();
 
   loadData();
   setupEventListeners();
-  
+
   // 渲染各项页面数据
   updateStats();
   renderHistory();
-  
+  renderAiRecommendations();
+  renderChatSessionMessages();
+  renderChatHistoryList();
+
   // 默认启动估算值计算
   updateCalorieEstimate();
 
@@ -109,6 +141,27 @@ function refreshHeaderDate() {
   document.getElementById("current-date").textContent = dateStr;
 }
 
+// ==========================================================================
+// 日间/夜间模式切换 (Theme Toggle)
+// 注意：实际主题在 <head> 内联脚本中已提前设好 data-theme 属性以避免首次渲染闪烁，
+// 这里只需要在 DOM 就绪后把切换按钮的图标同步成当前主题
+// ==========================================================================
+function toggleTheme() {
+  const current = document.documentElement.getAttribute("data-theme") || "dark";
+  const next = current === "light" ? "dark" : "light";
+  document.documentElement.setAttribute("data-theme", next);
+  localStorage.setItem("chocozap_theme", next);
+  syncThemeToggleIcon();
+  // 主题切换后折线图颜色跟随 CSS 变量重绘一次即可，坐标本身不受影响
+}
+
+function syncThemeToggleIcon() {
+  const btn = document.getElementById("theme-toggle-btn");
+  if (!btn) return;
+  const current = document.documentElement.getAttribute("data-theme") || "dark";
+  btn.textContent = current === "light" ? "☀️" : "🌙";
+}
+
 // 从 LocalStorage 加载数据
 function loadData() {
   const hasRunBefore = localStorage.getItem("chocozap_has_run_before");
@@ -121,7 +174,25 @@ function loadData() {
   } catch (e) {
     state.deletedIds = {};
   }
-  
+
+  // 加载 AI 训练推荐列表
+  try {
+    state.aiRecommendations = JSON.parse(localStorage.getItem("chocozap_ai_recommendations") || "[]") || [];
+  } catch (e) {
+    state.aiRecommendations = [];
+  }
+
+  // 加载 AI 多会话聊天记录
+  try {
+    state.chatSessions = JSON.parse(localStorage.getItem("chocozap_chat_sessions") || "[]") || [];
+  } catch (e) {
+    state.chatSessions = [];
+  }
+  state.activeChatSessionId = localStorage.getItem("chocozap_active_chat_session") || null;
+  if (!state.chatSessions.some(s => s.id === state.activeChatSessionId)) {
+    state.activeChatSessionId = state.chatSessions.length > 0 ? state.chatSessions[0].id : null;
+  }
+
   if (!hasRunBefore) {
     // 首次打开：加载预设 mock 数据并初始化设置，打上 has_run_before 标记
     state.workouts = initialMockWorkouts;
@@ -335,13 +406,15 @@ function setupFormForType(type) {
         document.getElementById("input-weight").value = lastWorkout.details.weight;
         document.getElementById("input-reps").value = lastWorkout.details.reps;
         document.getElementById("input-sets").value = lastWorkout.details.sets;
+        document.getElementById("input-extra-reps").value = lastWorkout.details.extraReps || "";
       } else {
         document.getElementById("input-weight").value = 50;
         document.getElementById("input-reps").value = 12;
         document.getElementById("input-sets").value = 3;
+        document.getElementById("input-extra-reps").value = "";
       }
       break;
-      
+
     case 'shoulder_press':
       formTitle.textContent = "肩推 (Shoulder Press)";
       formBadge.textContent = "力量训练";
@@ -350,13 +423,15 @@ function setupFormForType(type) {
         document.getElementById("input-weight").value = lastWorkout.details.weight;
         document.getElementById("input-reps").value = lastWorkout.details.reps;
         document.getElementById("input-sets").value = lastWorkout.details.sets;
+        document.getElementById("input-extra-reps").value = lastWorkout.details.extraReps || "";
       } else {
         document.getElementById("input-weight").value = 20;
         document.getElementById("input-reps").value = 10;
         document.getElementById("input-sets").value = 3;
+        document.getElementById("input-extra-reps").value = "";
       }
       break;
-      
+
     case 'chest_press':
       formTitle.textContent = "胸推 (Chest Press)";
       formBadge.textContent = "力量训练";
@@ -365,13 +440,15 @@ function setupFormForType(type) {
         document.getElementById("input-weight").value = lastWorkout.details.weight;
         document.getElementById("input-reps").value = lastWorkout.details.reps;
         document.getElementById("input-sets").value = lastWorkout.details.sets;
+        document.getElementById("input-extra-reps").value = lastWorkout.details.extraReps || "";
       } else {
         document.getElementById("input-weight").value = 30;
         document.getElementById("input-reps").value = 12;
         document.getElementById("input-sets").value = 3;
+        document.getElementById("input-extra-reps").value = "";
       }
       break;
-      
+
     case 'preacher_curl':
       formTitle.textContent = "牧师椅 (Preacher Curl)";
       formBadge.textContent = "力量训练";
@@ -380,13 +457,15 @@ function setupFormForType(type) {
         document.getElementById("input-weight").value = lastWorkout.details.weight;
         document.getElementById("input-reps").value = lastWorkout.details.reps;
         document.getElementById("input-sets").value = lastWorkout.details.sets;
+        document.getElementById("input-extra-reps").value = lastWorkout.details.extraReps || "";
       } else {
         document.getElementById("input-weight").value = 15;
         document.getElementById("input-reps").value = 12;
         document.getElementById("input-sets").value = 3;
+        document.getElementById("input-extra-reps").value = "";
       }
       break;
-      
+
     case 'situps':
       formTitle.textContent = "仰卧起坐 (Sit-ups)";
       formBadge.textContent = "腰腹核心";
@@ -394,9 +473,11 @@ function setupFormForType(type) {
       if (lastWorkout && lastWorkout.details) {
         document.getElementById("input-situps-reps").value = lastWorkout.details.reps;
         document.getElementById("input-situps-sets").value = lastWorkout.details.sets;
+        document.getElementById("input-situps-extra-reps").value = lastWorkout.details.extraReps || "";
       } else {
         document.getElementById("input-situps-reps").value = 15;
         document.getElementById("input-situps-sets").value = 3;
+        document.getElementById("input-situps-extra-reps").value = "";
       }
       break;
       
@@ -468,23 +549,31 @@ function setupFormForType(type) {
 function updateCalorieEstimate() {
   const isTreadmillVisible = document.getElementById("group-treadmill").style.display === "block";
   if (!isTreadmillVisible) return;
-  
+
   const mode = document.querySelector('input[name="treadmill-mode"]:checked').value; // 'walk' or 'run'
   const speed = parseFloat(document.getElementById("input-treadmill-speed").value) || 0; // km/h
   const incline = parseFloat(document.getElementById("input-treadmill-incline").value) || 0; // %
   const time = parseFloat(document.getElementById("input-treadmill-time").value) || 0; // min
-  
+
+  const est = computeTreadmillEstimate(mode, speed, incline, time);
+  document.getElementById("est-distance").innerHTML = `${est.distance.toFixed(2)} <small>km</small>`;
+  document.getElementById("est-calories").innerHTML = `${est.calories} <small>kcal</small>`;
+
+  return { distance: parseFloat(est.distance.toFixed(2)), calories: est.calories };
+}
+
+// 纯函数版跑步机估算 (不依赖 DOM)，供表单实时预览和 AI 推荐一键打卡复用，保证两处口径一致
+function computeTreadmillEstimate(mode, speed, incline, time) {
   // 1. 距离计算: Speed(km/h) * Time(min) / 60
   const distance = speed * (time / 60);
-  document.getElementById("est-distance").innerHTML = `${distance.toFixed(2)} <small>km</small>`;
-  
+
   // 2. 卡路里计算采用 ACSM（美国运动医学学会）公式：
   // 速度转化：1 km/h = 16.667 米/分钟
   const speedMetersPerMin = speed * 16.667;
   const gradeFraction = incline / 100;
-  
+
   let met = 3.5; // 基础代谢 1 MET = 3.5 ml/kg/min VO2
-  
+
   if (mode === "walk" || speed < 6.0) {
     // 步行公式: VO2 = 0.1 * speed + 1.8 * speed * grade + 3.5
     const vo2 = 0.1 * speedMetersPerMin + 1.8 * speedMetersPerMin * gradeFraction + 3.5;
@@ -494,19 +583,18 @@ function updateCalorieEstimate() {
     const vo2 = 0.2 * speedMetersPerMin + 0.9 * speedMetersPerMin * gradeFraction + 3.5;
     met = vo2 / 3.5;
   }
-  
+
   // 安全限制合理范围
   if (met < 2.0) met = 2.0;
   if (met > 18.0) met = 18.0;
-  
+
   // 用户身体重量
   const weight = state.settings.weight || 70;
-  
+
   // 消耗卡路里公式: kcal = (MET * 3.5 * weight * time) / 200
   const calories = Math.round((met * 3.5 * weight * time) / 200);
-  document.getElementById("est-calories").innerHTML = `${calories} <small>kcal</small>`;
-  
-  return { distance: parseFloat(distance.toFixed(2)), calories: calories };
+
+  return { distance: parseFloat(distance.toFixed(2)), calories };
 }
 
 // ==========================================================================
@@ -533,12 +621,15 @@ function saveWorkout(event) {
     details = {
       weight: parseFloat(document.getElementById("input-weight").value) || 0,
       reps: parseInt(document.getElementById("input-reps").value) || 0,
-      sets: parseInt(document.getElementById("input-sets").value) || 0
+      sets: parseInt(document.getElementById("input-sets").value) || 0,
+      // 组外次数：正式组数之外，力竭/额外加练的次数，可选
+      extraReps: parseInt(document.getElementById("input-extra-reps").value) || 0
     };
   } else if (type === 'situps') {
     details = {
       reps: parseInt(document.getElementById("input-situps-reps").value) || 0,
-      sets: parseInt(document.getElementById("input-situps-sets").value) || 0
+      sets: parseInt(document.getElementById("input-situps-sets").value) || 0,
+      extraReps: parseInt(document.getElementById("input-situps-extra-reps").value) || 0
     };
   } else if (type === 'spin_bike') {
     details = {
@@ -687,6 +778,97 @@ function updateStats() {
   
   // D. 本周运动折线图绘制
   drawWeeklyChart();
+
+  // E. 力量/有氧趋势分析
+  renderTrendAnalysis();
+}
+
+// 力量训练 vs 有氧训练的类型分类，供趋势分析和统计使用
+const STRENGTH_TYPES = ['leg_press', 'shoulder_press', 'chest_press', 'preacher_curl', 'situps'];
+const CARDIO_TYPES = ['treadmill', 'spin_bike'];
+
+// 趋势分析模块：最近30天力量/有氧/其他占比 + 最近4周力量容量与有氧时长趋势
+function renderTrendAnalysis() {
+  const proportionBar = document.getElementById("trend-proportion-bar");
+  if (!proportionBar) return; // 页面还未加入该模块时直接跳过
+
+  const today = new Date();
+
+  // A. 近 30 天 力量/有氧/其他 占比
+  const cutoff30 = new Date(today);
+  cutoff30.setDate(cutoff30.getDate() - 29);
+  const cutoff30Str = getLocalDateString(cutoff30);
+
+  let strengthCount = 0, cardioCount = 0, otherCount = 0;
+  state.workouts.forEach(w => {
+    if (w.date < cutoff30Str) return;
+    if (STRENGTH_TYPES.includes(w.type)) strengthCount++;
+    else if (CARDIO_TYPES.includes(w.type)) cardioCount++;
+    else otherCount++;
+  });
+  const total = strengthCount + cardioCount + otherCount;
+
+  const strengthPct = total > 0 ? Math.round((strengthCount / total) * 100) : 0;
+  const cardioPct = total > 0 ? Math.round((cardioCount / total) * 100) : 0;
+  const otherPct = total > 0 ? 100 - strengthPct - cardioPct : 0;
+
+  if (total === 0) {
+    proportionBar.innerHTML = `<div class="trend-bar-segment trend-bar-empty" style="width:100%"></div>`;
+  } else {
+    proportionBar.innerHTML = `
+      <div class="trend-bar-segment trend-bar-strength" style="width:${strengthPct}%" title="力量+核心 ${strengthCount}次"></div>
+      <div class="trend-bar-segment trend-bar-cardio" style="width:${cardioPct}%" title="有氧 ${cardioCount}次"></div>
+      <div class="trend-bar-segment trend-bar-other" style="width:${otherPct}%" title="其他 ${otherCount}次"></div>
+    `;
+  }
+  document.getElementById("trend-legend-strength").textContent = `力量 ${strengthCount}次 (${strengthPct}%)`;
+  document.getElementById("trend-legend-cardio").textContent = `有氧 ${cardioCount}次 (${cardioPct}%)`;
+  document.getElementById("trend-legend-other").textContent = `其他 ${otherCount}次 (${otherPct}%)`;
+
+  // B. 近 4 周 力量训练容量 (Σ weight×reps×sets) 与 有氧时长 (分钟) 趋势
+  // weekBuckets[3] 是本周（含今天往前推 6 天），weekBuckets[0] 是最早的一周
+  const weekVolume = [0, 0, 0, 0];
+  const weekCardioMinutes = [0, 0, 0, 0];
+
+  state.workouts.forEach(w => {
+    const d = parseLocalDate(w.date);
+    const diffDays = Math.floor((today - d) / 86400000);
+    if (diffDays < 0 || diffDays >= 28) return;
+    const weekIdx = 3 - Math.floor(diffDays / 7);
+
+    if (STRENGTH_TYPES.includes(w.type) && w.details && w.details.weight) {
+      weekVolume[weekIdx] += (w.details.weight || 0) * (w.details.reps || 0) * (w.details.sets || 0);
+    }
+    if (w.type === 'treadmill' || w.type === 'spin_bike') {
+      weekCardioMinutes[weekIdx] += (w.details.time || 0);
+    }
+  });
+
+  renderTrendMiniBars("trend-volume-bars", weekVolume, "kg");
+  renderTrendMiniBars("trend-cardio-bars", weekCardioMinutes, "分钟");
+}
+
+// 绘制 4 周迷你柱状趋势图 (纯 DOM/CSS，不用 SVG，轻量实现)
+function renderTrendMiniBars(containerId, values, unit) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+
+  const maxVal = Math.max(...values, 1);
+  const weekLabels = ["3周前", "2周前", "上周", "本周"];
+
+  container.innerHTML = values.map((val, idx) => {
+    const heightPct = Math.max(Math.round((val / maxVal) * 100), val > 0 ? 6 : 2);
+    const isCurrent = idx === values.length - 1;
+    return `
+      <div class="trend-mini-bar-col">
+        <span class="trend-mini-bar-value">${val > 0 ? Math.round(val) : ''}</span>
+        <div class="trend-mini-bar-track">
+          <div class="trend-mini-bar-fill ${isCurrent ? 'trend-mini-bar-current' : ''}" style="height:${heightPct}%"></div>
+        </div>
+        <span class="trend-mini-bar-label">${weekLabels[idx]}</span>
+      </div>
+    `;
+  }).join('');
 }
 
 // 原生绘制发光的 SVG 趋势折线图
@@ -870,27 +1052,27 @@ function renderHistory() {
         case 'leg_press':
           icon = "🦵";
           title = "腿举 (Leg Press)";
-          stats = `${item.details.weight}kg × ${item.details.reps}次 × ${item.details.sets}组`;
+          stats = `${item.details.weight}kg × ${item.details.reps}次 × ${item.details.sets}组` + (item.details.extraReps ? ` (+组外${item.details.extraReps}次)` : "");
           break;
         case 'shoulder_press':
           icon = "💪";
           title = "肩推 (Shoulder Press)";
-          stats = `${item.details.weight}kg × ${item.details.reps}次 × ${item.details.sets}组`;
+          stats = `${item.details.weight}kg × ${item.details.reps}次 × ${item.details.sets}组` + (item.details.extraReps ? ` (+组外${item.details.extraReps}次)` : "");
           break;
         case 'chest_press':
           icon = "🏋️";
           title = "胸推 (Chest Press)";
-          stats = `${item.details.weight}kg × ${item.details.reps}次 × ${item.details.sets}组`;
+          stats = `${item.details.weight}kg × ${item.details.reps}次 × ${item.details.sets}组` + (item.details.extraReps ? ` (+组外${item.details.extraReps}次)` : "");
           break;
         case 'preacher_curl':
           icon = "🧘";
           title = "牧师椅 (Preacher Curl)";
-          stats = `${item.details.weight}kg × ${item.details.reps}次 × ${item.details.sets}组`;
+          stats = `${item.details.weight}kg × ${item.details.reps}次 × ${item.details.sets}组` + (item.details.extraReps ? ` (+组外${item.details.extraReps}次)` : "");
           break;
         case 'situps':
           icon = "🧗";
           title = "仰卧起坐 (Sit-ups)";
-          stats = `${item.details.reps}次 × ${item.details.sets}组`;
+          stats = `${item.details.reps}次 × ${item.details.sets}组` + (item.details.extraReps ? ` (+组外${item.details.extraReps}次)` : "");
           break;
         case 'spin_bike':
           icon = "🚴";
@@ -948,8 +1130,15 @@ function renderHistory() {
 function generateWorkoutSummaryPrompt() {
   const weight = state.settings.weight || 70;
   const recentWorkouts = state.workouts.slice(0, 30); // 提取最近 30 次记录
-  
+
+  const equipmentListStr = EQUIPMENT_ROSTER.map(e => `- ${e.label}：${e.note}`).join("\n");
+
   let prompt = `你是一位专业且充满亲和力的 ChocoZAP 健身私人教练。请为我分析我最近的运动成果并提供针对性建议。
+
+【重要限制：ChocoZAP 门店实际可用的器材清单】
+${equipmentListStr}
+
+请严格注意：你所有的训练建议、动作推荐，必须只从上面这份器材清单里选择。ChocoZAP 是一家小型 24 小时便利健身房，没有杠铃深蹲架、龙门架、壶铃、单杠等常见大型健身房器械，所以请不要提及或推荐清单之外的动作和器材。如果某个训练目标（比如练背、练腿弯举）在清单里没有直接对应的器材，请从清单中挑选功能最相近的替代动作，并说明这是替代方案。
 
 【我的个人档案】
 - 体重: ${weight} kg
@@ -972,12 +1161,12 @@ function generateWorkoutSummaryPrompt() {
         massage_chair: "按摩椅放松 (拉伸)",
         custom: "自定义项目"
       }[w.type] || "其他";
-      
+
       let detailsStr = "";
       if (['leg_press', 'shoulder_press', 'chest_press', 'preacher_curl'].includes(w.type)) {
-        detailsStr = `${w.details.weight}kg x ${w.details.reps}次 x ${w.details.sets}组`;
+        detailsStr = `${w.details.weight}kg x ${w.details.reps}次 x ${w.details.sets}组` + (w.details.extraReps ? ` + 组外${w.details.extraReps}次` : "");
       } else if (w.type === 'situps') {
-        detailsStr = `${w.details.reps}次 x ${w.details.sets}组`;
+        detailsStr = `${w.details.reps}次 x ${w.details.sets}组` + (w.details.extraReps ? ` + 组外${w.details.extraReps}次` : "");
       } else if (w.type === 'spin_bike') {
         detailsStr = `阻力 ${w.details.resistance}档，骑行 ${w.details.time}分钟`;
       } else if (w.type === 'treadmill') {
@@ -987,21 +1176,174 @@ function generateWorkoutSummaryPrompt() {
       } else if (w.type === 'custom') {
         detailsStr = `[${w.details.name}] - 数据: ${w.details.value}` + (w.details.sets ? ` x ${w.details.sets}组` : "");
       }
-      
+
       prompt += `${index + 1}. 日期: ${w.date} | 项目: ${typeStr} | 运动详情: ${detailsStr} ${w.notes ? `| 个人备注: "${w.notes}"` : ""}\n`;
     });
   }
-  
+
   prompt += `
 【请帮我分析以下几点】
 1. 分析我近期力量训练（腿举、胸推、肩推等）和有氧运动（跑步机、单车）的分配比例是否科学？
 2. 在力量训练的负荷与渐进性超负荷方面，有没有发现我的进步趋势或需要调整的地方？
-3. 从脂肪燃烧、肌肉增长或体能改善的角度，给我推荐一套接下来两周在 ChocoZAP 器材上的健身动作顺序和强度建议。
+3. 从脂肪燃烧、肌肉增长或体能改善的角度，给我推荐一套接下来两周在 ChocoZAP 器材上的健身动作顺序和强度建议（同样必须只使用上面清单里的器材）。
 4. 结合我的体重，指出有氧运动中热量消耗效率的表现。
 
 请用极其鼓励的口吻回答我，排版美观，使用 emoji 增加活力！`;
 
   return prompt;
+}
+
+// ==========================================================================
+// 7.1 "Gemini的推荐" 首页模块：解析 AI 结构化训练计划、渲染、完成/拒绝
+// ==========================================================================
+
+// 只有直连 API 模式才能拿到可解析的回复，这里教会 Gemini 在"给出具体训练菜单推荐"时，
+// 在人类可读的回复末尾追加一段机器可读的 JSON 计划块，方便一键转为打卡记录
+function buildStructuredPlanInstruction() {
+  const typeSchemaStr = Object.keys(WORKOUT_REQUIRED_FIELDS)
+    .map(t => `  - "${t}": details 需要 ${WORKOUT_REQUIRED_FIELDS[t].join('、')} (均为数字，treadmill 的 mode 是 "walk" 或 "run" 字符串)`)
+    .join('\n');
+
+  return `
+【结构化训练计划输出格式 —— 仅在你本次回复中给出了具体的训练动作/菜单/组数重量等可执行推荐时才需要输出】
+如果我这次提问是在请求你给出具体可执行的训练动作安排（比如"帮我安排今天的训练""给我一套菜单""接下来练什么"），
+请在你正常的、给人看的回复内容结束之后，另起一行，追加一个由 <!--CHOCOZAP_PLAN_START--> 和 <!--CHOCOZAP_PLAN_END--> 包裹的 JSON 数组，
+数组每一项代表一个推荐动作，格式为：
+{ "type": "器材英文标识", "label": "中文名称", "intensity": "给人看的强度描述文字，例如 50kg x 12次 x 3组", "details": { ...结构化数值字段 } }
+type 必须是以下英文标识之一，且 details 字段必须严格匹配对应的数值 schema：
+${typeSchemaStr}
+如果推荐的动作不在上述器材范围内，type 请填 "custom"，details 填 { "name": "动作名称", "value": "关键数据文字", "sets": 组数或null }。
+这段 JSON 是给 App 自动解析用的，不需要在正文里重复解释它，也不要用 Markdown 代码块包裹，直接是纯 JSON 数组文本。
+如果这次回复只是分析、聊天、解答疑问，没有给出具体训练菜单，则完全不要输出这个代码块。`;
+}
+
+// 从 AI 回复文本中提取结构化训练计划 JSON 块，返回清理后的正文 + 计划数组
+function extractAiPlanFromReply(text) {
+  const match = text.match(/<!--CHOCOZAP_PLAN_START-->([\s\S]*?)<!--CHOCOZAP_PLAN_END-->/);
+  if (!match) return { cleanedText: text, items: [] };
+
+  const cleanedText = (text.slice(0, match.index) + text.slice(match.index + match[0].length)).trim();
+  let items = [];
+  try {
+    const parsed = JSON.parse(match[1].trim());
+    if (Array.isArray(parsed)) items = parsed;
+  } catch (e) {
+    items = [];
+  }
+  return { cleanedText, items };
+}
+
+// 把 AI 给出的原始计划条目校验/归一化后加入推荐列表并持久化
+function addAiRecommendations(rawItems) {
+  const now = Date.now();
+  const added = rawItems.map((item, idx) => ({
+    id: "rec-" + now + "-" + idx + "-" + Math.random().toString(36).slice(2, 6),
+    type: typeof item.type === 'string' ? item.type : 'custom',
+    label: typeof item.label === 'string' && item.label ? item.label : '训练推荐',
+    intensity: typeof item.intensity === 'string' ? item.intensity : '',
+    details: (item.details && typeof item.details === 'object') ? item.details : null,
+    createdAt: now
+  })).filter(item => item.label);
+
+  if (added.length === 0) return;
+
+  state.aiRecommendations = state.aiRecommendations.concat(added);
+  localStorage.setItem("chocozap_ai_recommendations", JSON.stringify(state.aiRecommendations));
+  renderAiRecommendations();
+}
+
+// 渲染首页"Gemini的推荐"模块；没有待处理推荐时整个模块隐藏，避免占用首页空间
+function renderAiRecommendations() {
+  const section = document.getElementById("ai-recommendation-section");
+  const list = document.getElementById("ai-recommendation-list");
+  if (!section || !list) return;
+
+  if (!state.aiRecommendations || state.aiRecommendations.length === 0) {
+    section.style.display = "none";
+    list.innerHTML = ""; // 清空残留节点，避免隐藏后 DOM 里仍留着旧的推荐卡片
+    return;
+  }
+  section.style.display = "block";
+
+  const iconMap = {
+    leg_press: "🦵", shoulder_press: "💪", chest_press: "🏋️", preacher_curl: "🧘",
+    situps: "🧗", spin_bike: "🚴", treadmill: "🏃", massage_chair: "💆", custom: "⚙️"
+  };
+
+  list.innerHTML = state.aiRecommendations.map(rec => `
+    <div class="glass ai-rec-item">
+      <div class="ai-rec-left">
+        <div class="ai-rec-avatar">${iconMap[rec.type] || "⚙️"}</div>
+        <div class="ai-rec-details">
+          <span class="ai-rec-title">${rec.label}</span>
+          ${rec.intensity ? `<span class="ai-rec-intensity">${rec.intensity}</span>` : ''}
+        </div>
+      </div>
+      <div class="ai-rec-actions">
+        <button class="ai-rec-btn ai-rec-accept" onclick="acceptAiRecommendation('${rec.id}')" title="完成并打卡">✓ 完成</button>
+        <button class="ai-rec-btn ai-rec-reject" onclick="rejectAiRecommendation('${rec.id}')" title="不需要这条推荐">✕ 拒绝</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+// 点击"完成"：把推荐条目落地为一条今天的真实打卡记录
+function acceptAiRecommendation(id) {
+  const rec = state.aiRecommendations.find(r => r.id === id);
+  if (!rec) return;
+
+  const knownTypes = Object.keys(WORKOUT_REQUIRED_FIELDS);
+  let type = knownTypes.includes(rec.type) ? rec.type : 'custom';
+  let details = rec.details && typeof rec.details === 'object' ? { ...rec.details } : null;
+
+  // 校验必填字段是否齐全，任一缺失就降级为 custom 类型，只保留强度文字，绝不编造数值
+  if (type !== 'custom') {
+    const requiredFields = WORKOUT_REQUIRED_FIELDS[type];
+    const valid = details && requiredFields.every(f => details[f] !== undefined && details[f] !== null && details[f] !== '');
+    if (!valid) type = 'custom';
+  }
+
+  if (type === 'custom') {
+    details = {
+      name: rec.label || '自定义项目',
+      value: rec.intensity || '',
+      sets: (details && details.sets) || null
+    };
+  } else if (type === 'treadmill') {
+    // 距离/卡路里统一由 App 按同一套公式计算，不采信 AI 自行估算的数值，保证口径一致
+    const est = computeTreadmillEstimate(details.mode, details.speed, details.incline, details.time);
+    details.distance = est.distance;
+    details.calories = est.calories;
+  }
+
+  const newWorkout = {
+    id: "workout-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8),
+    date: getLocalDateString(),
+    type: type,
+    details: details,
+    notes: "来自 Gemini 推荐" + (rec.intensity ? `：${rec.intensity}` : "")
+  };
+
+  state.workouts.unshift(newWorkout);
+  localStorage.setItem("chocozap_workouts", JSON.stringify(state.workouts));
+
+  state.aiRecommendations = state.aiRecommendations.filter(r => r.id !== id);
+  localStorage.setItem("chocozap_ai_recommendations", JSON.stringify(state.aiRecommendations));
+
+  if (state.settings.githubToken) {
+    syncWithGithub(true);
+  }
+
+  renderAiRecommendations();
+  updateStats();
+  renderHistory();
+}
+
+// 点击"拒绝"：仅从推荐列表移除，不产生任何打卡记录
+function rejectAiRecommendation(id) {
+  state.aiRecommendations = state.aiRecommendations.filter(r => r.id !== id);
+  localStorage.setItem("chocozap_ai_recommendations", JSON.stringify(state.aiRecommendations));
+  renderAiRecommendations();
 }
 
 // 模式 B: 一键生成 Prompt 并弹出弹窗供用户复制
@@ -1034,103 +1376,232 @@ function copyPromptText() {
   }
 }
 
+// ==========================================================================
+// 7.2 AI 多会话聊天记录 (Chat Sessions，仿主流 AI 聊天 App 的历史对话)
+// ==========================================================================
+// 注意：这段文字会经过 formatChatMessageText 处理 (先转义 HTML 再解析 **粗体**/换行)，
+// 所以这里只能写 Markdown 语法，不能直接写 <strong>/<br> 这类 HTML 标签，否则会被转义显示成字面文字
+const CHAT_WELCOME_TEXT = `你好！我是你的 AI 健身教练。我会根据你录入的 ChocoZAP 健身记录来分析你的运动成效、建议合理的负荷与恢复周期，还可以为你定制饮食与锻炼计划。
+
+**💡 使用方式：**
+1. **API 直连对话**：在"设置"中配置 Gemini API Key，即可直接在下方输入框和我对话！
+2. **免 API 一键打包**：点击下方的"打包健身数据"，我将生成一份带有你所有打卡细节的 Prompt 模板，你只需复制它即可粘贴至任何 AI 网页端进行分析。`;
+
+function persistChatSessions() {
+  localStorage.setItem("chocozap_chat_sessions", JSON.stringify(state.chatSessions));
+  localStorage.setItem("chocozap_active_chat_session", state.activeChatSessionId || "");
+}
+
+// 取得当前激活的会话，如果不存在（首次使用/被删空）则新建一个
+function getActiveChatSession() {
+  let session = state.chatSessions.find(s => s.id === state.activeChatSessionId);
+  if (!session) {
+    session = { id: "chat-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6), messages: [], updatedAt: Date.now() };
+    state.chatSessions.unshift(session);
+    state.activeChatSessionId = session.id;
+    persistChatSessions();
+  }
+  return session;
+}
+
+// 会话标题：取该会话第一条用户提问，截断展示；还没有提问时显示"新对话"
+function getSessionTitle(session) {
+  const firstUserMsg = session.messages.find(m => m.role === 'user');
+  if (!firstUserMsg) return "新对话";
+  const text = firstUserMsg.text.trim();
+  return text.length > 16 ? text.slice(0, 16) + "…" : text;
+}
+
+function startNewChatSession() {
+  const session = { id: "chat-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6), messages: [], updatedAt: Date.now() };
+  state.chatSessions.unshift(session);
+  state.activeChatSessionId = session.id;
+  persistChatSessions();
+  renderChatSessionMessages();
+  renderChatHistoryList();
+  closeChatHistoryPanel();
+}
+
+function switchChatSession(id) {
+  if (state.activeChatSessionId === id) { closeChatHistoryPanel(); return; }
+  state.activeChatSessionId = id;
+  persistChatSessions();
+  renderChatSessionMessages();
+  renderChatHistoryList();
+  closeChatHistoryPanel();
+}
+
+function deleteChatSession(id, event) {
+  if (event) event.stopPropagation(); // 防止触发外层的切换会话点击
+  if (!confirm("确定要删除这段对话记录吗？此操作无法撤销。")) return;
+
+  state.chatSessions = state.chatSessions.filter(s => s.id !== id);
+  if (state.activeChatSessionId === id) {
+    state.activeChatSessionId = state.chatSessions.length > 0 ? state.chatSessions[0].id : null;
+  }
+  persistChatSessions();
+  renderChatSessionMessages();
+  renderChatHistoryList();
+}
+
+function toggleChatHistoryPanel() {
+  const panel = document.getElementById("chat-history-panel");
+  if (!panel) return;
+  panel.classList.toggle("open");
+  if (panel.classList.contains("open")) renderChatHistoryList();
+}
+
+function closeChatHistoryPanel() {
+  const panel = document.getElementById("chat-history-panel");
+  if (panel) panel.classList.remove("open");
+}
+
+// 渲染左侧历史对话列表
+function renderChatHistoryList() {
+  const list = document.getElementById("chat-history-list");
+  if (!list) return;
+
+  if (state.chatSessions.length === 0) {
+    list.innerHTML = `<div class="chat-history-empty">暂无历史对话，发送第一条消息后会自动生成～</div>`;
+    return;
+  }
+
+  const sorted = [...state.chatSessions].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  list.innerHTML = sorted.map(session => {
+    const isActive = session.id === state.activeChatSessionId;
+    const lastMsg = session.messages[session.messages.length - 1];
+    const timeStr = lastMsg ? new Date(lastMsg.time || session.updatedAt).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }) : '';
+    return `
+      <div class="chat-history-item ${isActive ? 'active' : ''}" onclick="switchChatSession('${session.id}')">
+        <div class="chat-history-item-title">${getSessionTitle(session)}</div>
+        <div class="chat-history-item-meta">
+          <span>${timeStr}</span>
+          <button class="chat-history-delete-btn" onclick="deleteChatSession('${session.id}', event)" title="删除">🗑</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+// 把当前激活会话的历史消息重新渲染进聊天窗口 (切换会话/刷新页面时调用)
+function renderChatSessionMessages() {
+  const container = document.getElementById("chat-messages-container");
+  if (!container) return;
+  container.innerHTML = "";
+
+  const session = state.chatSessions.find(s => s.id === state.activeChatSessionId);
+  if (!session || session.messages.length === 0) {
+    appendMessage("ai", "Gemini Coach", CHAT_WELCOME_TEXT, false, false);
+    return;
+  }
+  session.messages.forEach(m => {
+    appendMessage(m.role, m.name, m.text, false, false);
+  });
+}
+
 // 模式 A: API 直连对话
 async function sendChatMessage() {
   const chatInput = document.getElementById("chat-input");
   const userText = chatInput.value.trim();
   if (!userText) return;
-  
+
   const apiKey = state.settings.apiKey;
   const model = state.settings.apiModel || 'gemini-2.5-flash';
-  
-  // 1. 将用户的提问呈现在 UI 聊天框中
+  const session = getActiveChatSession();
+
+  // 1. 将用户的提问呈现在 UI 聊天框中，并计入当前会话历史
   appendMessage("user", "你", userText);
   chatInput.value = "";
-  
+
   // 2. 检测 API Key 是否配置
   if (!apiKey) {
     setTimeout(() => {
       appendMessage("ai", "Gemini Coach", `未检测到您的 API Key。
-      
+
 我已经将您的最近健身打卡数据与刚才的提问打包。请点击输入框上方的“**打包健身数据**”按钮直接复制，在网页端 Gemini/ChatGPT 提问即可！
 当然，如果您希望在应用内获得直连的丝滑对话，可以在“设置”页面中输入您的 Gemini API Key。`);
     }, 600);
     return;
   }
-  
-  // 3. 构建发送给 API 的完整系统设定 + 健身记录 + 用户当前问题
-  const gymDataPrompt = generateWorkoutSummaryPrompt();
-  const apiMessageContext = `
-【健身顾问系统指令与背景】
-${gymDataPrompt}
 
-【注意】上面是我的历史记录，下面是我的最新提问。请结合上面的历史记录（如果相关）回答我的问题。
-用户提问："${userText}"
-`;
+  // 3. 系统指令：健身数据背景 + 器材白名单约束 + 结构化训练计划输出格式
+  const systemPromptText = generateWorkoutSummaryPrompt() + "\n" + buildStructuredPlanInstruction();
 
-  // 4. 显示 AI 正在思考 (Typing...)
+  // 4. 把当前会话的历史消息转换为 Gemini 多轮对话格式，实现真正的"继续聊下去"
+  //    (而不是每次都把整段历史重新塞进单条 user 消息里)
+  const conversationTurns = session.messages.map(m => ({
+    role: m.role === 'user' ? 'user' : 'model',
+    parts: [{ text: m.text }]
+  }));
+
+  // 5. 显示 AI 正在思考 (Typing...)
   const tempBubbleId = appendMessage("ai", "Gemini Coach", "正在思考中，请稍候...", true);
-  
+
   try {
     // Google Gemini API Beta 直连请求
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-    
+
     const response = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: apiMessageContext }]
-          }
-        ],
+        systemInstruction: { parts: [{ text: systemPromptText }] },
+        contents: conversationTurns,
         // 移除 maxOutputTokens 限制，让模型自主完整回答
         generationConfig: {
           temperature: 0.7
         }
       })
     });
-    
+
     const data = await response.json();
-    
+
     // 移除正在思考的临时泡泡
     removeMessage(tempBubbleId);
-    
+
     if (response.ok && data.candidates && data.candidates[0].content && data.candidates[0].content.parts) {
       // 无损拼接所有 parts 的 text，防止多 part 返回时导致的话语中途截断
-      const replyText = data.candidates[0].content.parts.map(part => part.text || "").join("");
-      appendMessage("ai", "Gemini Coach", replyText);
+      const rawReplyText = data.candidates[0].content.parts.map(part => part.text || "").join("");
+
+      // 提取结构化训练计划 (如果本次回复包含具体推荐)，正文里不展示这段 JSON
+      const { cleanedText, items } = extractAiPlanFromReply(rawReplyText);
+      let displayText = cleanedText;
+      if (items.length > 0) {
+        addAiRecommendations(items);
+        displayText += `\n\n✅ 已为你生成 ${items.length} 条训练推荐，可以在首页「Gemini的推荐」模块查看，点击完成会自动生成今天的打卡记录。`;
+      }
+      appendMessage("ai", "Gemini Coach", displayText);
     } else {
       // 捕获 API 内部错误
       const errorMsg = data.error ? data.error.message : "请求 Gemini 失败，请检查 API Key 是否有效。";
       appendMessage("ai", "Gemini Coach", `❌ 发生错误：${errorMsg}`);
     }
-    
+
   } catch (error) {
     removeMessage(tempBubbleId);
     appendMessage("ai", "Gemini Coach", `❌ 网络请求失败，请确保本地可以连通 Google Gemini 接口 (部分地区可能需要科学上网)。错误详情: ${error.message}`);
   }
 }
 
-// 辅助：向 UI 添加对话气泡
-function appendMessage(sender, senderName, text, isPending = false) {
+// 辅助：向 UI 添加对话气泡。persist=true 时会把消息计入当前会话历史并写入 localStorage
+// (回放历史会话/渲染欢迎语时传 persist=false，避免重复写入)
+function appendMessage(sender, senderName, text, isPending = false, persist = true) {
   const container = document.getElementById("chat-messages-container");
   if (!container) return;
-  
+
   const bubbleId = "chat-bubble-" + Date.now() + Math.random().toString(36).substr(2, 5);
   const bubble = document.createElement("div");
   bubble.id = bubbleId;
   bubble.className = `chat-bubble ${sender}-bubble`;
-  
+
   // 简易格式化 Markdown
   const formattedText = formatChatMessageText(text);
-  
+
   const d = new Date();
   const timeStr = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  
+
   bubble.innerHTML = `
     <div class="bubble-header">
       <span class="bubble-sender">${senderName}</span>
@@ -1138,15 +1609,23 @@ function appendMessage(sender, senderName, text, isPending = false) {
     </div>
     <div class="bubble-text">${formattedText}</div>
   `;
-  
+
   if (isPending) {
     bubble.classList.add("chat-bubble-pending");
   }
-  
+
   container.appendChild(bubble);
   // 滚动至最下方
   container.scrollTop = container.scrollHeight;
-  
+
+  if (persist && !isPending) {
+    const session = getActiveChatSession();
+    session.messages.push({ role: sender, name: senderName, text: text, time: d.getTime() });
+    session.updatedAt = d.getTime();
+    persistChatSessions();
+    renderChatHistoryList();
+  }
+
   return bubbleId;
 }
 
