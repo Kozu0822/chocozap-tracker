@@ -5,6 +5,8 @@
 // ==========================================================================
 let state = {
   workouts: [],
+  // 已删除记录的墓碑表 { workoutId: 删除时间戳 }，用于云同步时防止被删记录从云端"复活"
+  deletedIds: {},
   settings: {
     weight: 70,
     apiKey: '',
@@ -82,10 +84,7 @@ const initialMockWorkouts = [
 
 // 初始化加载
 document.addEventListener("DOMContentLoaded", () => {
-  // 设置顶部日期展示
-  const d = new Date();
-  const dateStr = `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
-  document.getElementById("current-date").textContent = dateStr;
+  refreshHeaderDate();
 
   loadData();
   setupEventListeners();
@@ -103,11 +102,25 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 });
 
+// 刷新顶部日期展示 (页签切换时也会调用，保证 PWA 长期驻留后台跨天后日期依然正确)
+function refreshHeaderDate() {
+  const d = new Date();
+  const dateStr = `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
+  document.getElementById("current-date").textContent = dateStr;
+}
+
 // 从 LocalStorage 加载数据
 function loadData() {
   const hasRunBefore = localStorage.getItem("chocozap_has_run_before");
   const storedWorkouts = localStorage.getItem("chocozap_workouts");
   const storedSettings = localStorage.getItem("chocozap_settings");
+
+  // 加载已删除记录的墓碑表
+  try {
+    state.deletedIds = JSON.parse(localStorage.getItem("chocozap_deleted") || "{}") || {};
+  } catch (e) {
+    state.deletedIds = {};
+  }
   
   if (!hasRunBefore) {
     // 首次打开：加载预设 mock 数据并初始化设置，打上 has_run_before 标记
@@ -163,13 +176,27 @@ function loadData() {
   }
 }
 
+// 辅助函数：生成本地时区的 YYYY-MM-DD 字符串
+// 注意：不能用 toISOString()，它返回的是 UTC 日期。对于东八/九区用户，
+// 本地凌晨到早上 8-9 点之间 UTC 日期还停留在"昨天"，会导致打卡日期错一天
+function getLocalDateString(d = new Date()) {
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${month}-${day}`;
+}
+
+// 辅助函数：把 YYYY-MM-DD 按本地时区解析为 Date
+// (new Date("YYYY-MM-DD") 会按 UTC 零点解析，在西半球时区会偏移到前一天)
+function parseLocalDate(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
 // 辅助函数：生成过去某一天的 YYYY-MM-DD 字符串
 function getPastDateString(daysAgo) {
   const d = new Date();
   d.setDate(d.getDate() - daysAgo);
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}-${month}-${day}`;
+  return getLocalDateString(d);
 }
 
 // ==========================================================================
@@ -205,7 +232,9 @@ function switchTab(tabName) {
   
   const activeView = document.getElementById(`view-${tabName}`);
   if (activeView) activeView.classList.add("active");
-  
+
+  refreshHeaderDate();
+
   // 重新渲染相关的数据/折线图 (有些界面需要动态重画)
   if (tabName === 'dashboard') {
     updateStats();
@@ -280,7 +309,15 @@ function setupFormForType(type) {
   document.getElementById("form-placeholder").style.display = "none";
   
   document.getElementById("input-exercise-type").value = type;
-  
+
+  // 初始化打卡日期选择器：默认今天，且不允许选择未来日期 (支持补记过去漏打的卡)
+  const dateInput = document.getElementById("input-workout-date");
+  if (dateInput) {
+    const today = getLocalDateString();
+    dateInput.value = today;
+    dateInput.max = today;
+  }
+
   const formTitle = document.getElementById("form-title");
   const formBadge = document.getElementById("form-badge-type");
   
@@ -482,7 +519,12 @@ function saveWorkout(event) {
   if (!type) return;
   
   const notes = document.getElementById("input-notes").value.trim();
-  const dateToday = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+
+  // 打卡日期：优先取用户在日期选择器中选定的日期 (支持补记)，默认为本地时区的今天
+  const dateToday = getLocalDateString();
+  const dateInput = document.getElementById("input-workout-date");
+  let workoutDate = (dateInput && dateInput.value) ? dateInput.value : dateToday;
+  if (workoutDate > dateToday) workoutDate = dateToday; // 禁止未来日期
   
   let details = {};
   
@@ -532,10 +574,10 @@ function saveWorkout(event) {
     };
   }
   
-  // 构建单条 Workout 对象
+  // 构建单条 Workout 对象 (id 附加随机后缀，避免同一毫秒内连续打卡产生重复 id)
   const newWorkout = {
-    id: "workout-" + Date.now(),
-    date: dateToday,
+    id: "workout-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8),
+    date: workoutDate,
     type: type,
     details: details,
     notes: notes
@@ -571,7 +613,10 @@ function saveWorkout(event) {
 function deleteWorkout(id) {
   if (confirm("确定要删除这条打卡记录吗？此操作无法撤销。")) {
     state.workouts = state.workouts.filter(w => w.id !== id);
+    // 写入墓碑：云同步合并时据此排除该记录，防止删除后被云端数据"复活"
+    state.deletedIds[id] = Date.now();
     localStorage.setItem("chocozap_workouts", JSON.stringify(state.workouts));
+    localStorage.setItem("chocozap_deleted", JSON.stringify(state.deletedIds));
     renderHistory();
     updateStats();
     
@@ -596,21 +641,21 @@ function updateStats() {
   const workoutDates = [...new Set(workouts.map(w => w.date))].sort((a, b) => new Date(b) - new Date(a));
   
   let streak = 0;
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = getLocalDateString();
   const yesterdayStr = getPastDateString(1);
-  
+
   if (workoutDates.length > 0) {
     const newestDate = workoutDates[0];
-    
+
     // 如果最新打卡日期既不是今天也不是昨天，说明连续已经断了
     if (newestDate === todayStr || newestDate === yesterdayStr) {
       streak = 1;
-      let checkDate = new Date(newestDate);
-      
+      let checkDate = parseLocalDate(newestDate);
+
       for (let i = 1; i < workoutDates.length; i++) {
         // 前一天
         checkDate.setDate(checkDate.getDate() - 1);
-        const expectedDateStr = checkDate.toISOString().split('T')[0];
+        const expectedDateStr = getLocalDateString(checkDate);
         
         if (workoutDates[i] === expectedDateStr) {
           streak++;
@@ -656,7 +701,7 @@ function drawWeeklyChart() {
   for (let i = 6; i >= 0; i--) {
     const d = new Date();
     d.setDate(d.getDate() - i);
-    const dateStr = d.toISOString().split('T')[0];
+    const dateStr = getLocalDateString(d);
     
     // 日期简称 (如 "7.03" 或 "周五")
     const weekDays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
@@ -793,12 +838,12 @@ function renderHistory() {
   const sortedDates = Object.keys(groups).sort((a, b) => new Date(b) - new Date(a));
   
   let html = "";
-  
+
+  // 转换日期语义化 (如 今天 / 昨天)
+  const todayStr = getLocalDateString();
+  const yesterdayStr = getPastDateString(1);
+
   sortedDates.forEach(dateStr => {
-    // 转换日期语义化 (如 今天 / 昨天)
-    const todayStr = new Date().toISOString().split('T')[0];
-    const yesterdayStr = getPastDateString(1);
-    
     let dateDisplay = dateStr;
     const parts = dateStr.split('-');
     const formattedStr = `${parseInt(parts[1])}月${parseInt(parts[2])}日`;
@@ -1165,15 +1210,17 @@ function saveSettings() {
   }
 }
 
-// 导出所有数据为 JSON 下载 (已剥离敏感 API Key 并确保安全传输)
+// 导出所有数据为 JSON 下载 (已剥离敏感凭据，备份文件可安全分享)
 function exportData() {
-  // 深度复制设置，并剔除敏感的 apiKey
+  // 深度复制设置，并剔除敏感凭据：Gemini API Key 和 GitHub Token 都不能进备份文件
   const settingsToExport = { ...state.settings };
   delete settingsToExport.apiKey;
+  delete settingsToExport.githubToken;
 
   const dataStr = JSON.stringify({
-    version: "1.0",
+    version: "1.1",
     workouts: state.workouts,
+    deleted: state.deletedIds,
     settings: settingsToExport
   }, null, 2);
   
@@ -1208,14 +1255,25 @@ function importData(event) {
         const importedWorkouts = data.workouts || [];
         
         const mergedMap = new Map();
-        // 放入导入的历史记录
-        importedWorkouts.forEach(w => mergedMap.set(w.id, w));
+        // 放入导入的历史记录 (导入备份是显式的"恢复"操作，可复活本地已删除的记录)
+        importedWorkouts.forEach(w => {
+          mergedMap.set(w.id, w);
+          delete state.deletedIds[w.id];
+        });
         // 放入本地已有的记录 (若有冲突，本地最新记录优先)
         localWorkouts.forEach(w => mergedMap.set(w.id, w));
-        
+
+        // 合并备份文件中的删除墓碑 (仅对本地不存在的记录生效，导入不会删除本地数据)
+        if (data.deleted && typeof data.deleted === 'object') {
+          Object.keys(data.deleted).forEach(id => {
+            if (!mergedMap.has(id)) state.deletedIds[id] = data.deleted[id];
+          });
+        }
+        localStorage.setItem("chocozap_deleted", JSON.stringify(state.deletedIds));
+
         // 转回数组并按日期从新到旧排序
         const mergedList = Array.from(mergedMap.values()).sort((a, b) => new Date(b.date) - new Date(a.date));
-        
+
         state.workouts = mergedList;
         localStorage.setItem("chocozap_workouts", JSON.stringify(state.workouts));
         
@@ -1261,27 +1319,50 @@ async function resetDatabase() {
   const token = state.settings.githubToken;
   const gistId = state.settings.githubGistId;
 
-  // 1. 如果已配置云端同步，必须发送请求清空 GitHub Gist 云端数据，否则刷新后会自动拉回
+  // 1. 把当前本地全部记录写入删除墓碑，防止其他设备把老数据同步回来
+  const now = Date.now();
+  const tombstones = { ...state.deletedIds };
+  (state.workouts || []).forEach(w => { tombstones[w.id] = now; });
+
+  // 2. 如果已配置云端同步，必须同步清空 GitHub Gist 云端数据，否则刷新后会自动拉回
   if (token && gistId) {
     const resetBtn = document.querySelector(".settings-card.border-danger .btn-danger");
-    const originalText = resetBtn ? resetBtn.innerHTML : "";
     if (resetBtn) {
       resetBtn.disabled = true;
       resetBtn.innerHTML = "⌛ 正在同步清空云端...";
     }
 
+    const headers = {
+      "Authorization": `token ${token}`,
+      "Accept": "application/vnd.github.v3+json",
+      "Content-Type": "application/json"
+    };
+
     try {
+      // 先拉取云端，把云端已有而本地没有的记录 ID 也一并写入墓碑
+      const getResponse = await fetch(`https://api.github.com/gists/${gistId}`, {
+        method: "GET",
+        headers: headers
+      });
+      if (getResponse.ok) {
+        const gistDetail = await getResponse.json();
+        const syncFile = gistDetail.files["chocozap_workouts.json"];
+        if (syncFile && syncFile.content) {
+          const parsed = parseCloudContent(syncFile.content);
+          parsed.workouts.forEach(w => { tombstones[w.id] = now; });
+          Object.keys(parsed.deleted).forEach(id => {
+            if (!tombstones[id]) tombstones[id] = parsed.deleted[id];
+          });
+        }
+      }
+
       const response = await fetch(`https://api.github.com/gists/${gistId}`, {
         method: "PATCH",
-        headers: {
-          "Authorization": `token ${token}`,
-          "Accept": "application/vnd.github.v3+json",
-          "Content-Type": "application/json"
-        },
+        headers: headers,
         body: JSON.stringify({
           files: {
             "chocozap_workouts.json": {
-              "content": "[]"
+              "content": JSON.stringify({ workouts: [], deleted: tombstones }, null, 2)
             }
           }
         })
@@ -1296,11 +1377,12 @@ async function resetDatabase() {
     }
   }
 
-  // 2. 清空本地历史，并保持 has_run_before 状态，防止重新加载时写入 mock 数据
+  // 3. 清空本地历史并保存墓碑，保持 has_run_before 状态，防止重新加载时写入 mock 数据
   localStorage.setItem("chocozap_workouts", JSON.stringify([]));
+  localStorage.setItem("chocozap_deleted", JSON.stringify(tombstones));
   localStorage.setItem("chocozap_has_run_before", "true");
-  
-  // 3. 重新加载页面刷新至最空状态
+
+  // 4. 重新加载页面刷新至最空状态
   location.reload();
 }
 
@@ -1319,6 +1401,36 @@ window.addEventListener("resize", () => {
 // ==========================================================================
 // 9. GitHub Gist 云端自动同步功能 (GitHub Gist Cloud Sync)
 // ==========================================================================
+
+// 解析云端 Gist 文件内容：兼容旧版纯数组格式和新版 { workouts, deleted } 对象格式
+function parseCloudContent(content) {
+  let workouts = [];
+  let deleted = {};
+  try {
+    const parsed = JSON.parse(content);
+    if (Array.isArray(parsed)) {
+      workouts = parsed;
+    } else if (parsed && typeof parsed === 'object') {
+      if (Array.isArray(parsed.workouts)) workouts = parsed.workouts;
+      if (parsed.deleted && typeof parsed.deleted === 'object') deleted = parsed.deleted;
+    }
+  } catch (e) {
+    // 内容损坏时视为空
+  }
+  return { workouts, deleted };
+}
+
+// 墓碑保留 180 天后自动清理，防止无限膨胀 (届时所有设备早已同步过删除操作)
+const TOMBSTONE_TTL_MS = 180 * 24 * 60 * 60 * 1000;
+
+function pruneTombstones(deletedMap) {
+  const cutoff = Date.now() - TOMBSTONE_TTL_MS;
+  Object.keys(deletedMap).forEach(id => {
+    if (!deletedMap[id] || deletedMap[id] < cutoff) delete deletedMap[id];
+  });
+  return deletedMap;
+}
+
 async function syncWithGithub(isSilent = false) {
   const token = state.settings.githubToken;
   let gistId = state.settings.githubGistId;
@@ -1441,33 +1553,39 @@ async function syncWithGithub(isSilent = false) {
     
     const gistDetail = await getResponse.json();
     const syncFile = gistDetail.files["chocozap_workouts.json"];
-    
+
     let cloudWorkouts = [];
+    let cloudDeleted = {};
     if (syncFile && syncFile.content) {
-      try {
-        cloudWorkouts = JSON.parse(syncFile.content);
-      } catch (e) {
-        cloudWorkouts = [];
-      }
+      const parsed = parseCloudContent(syncFile.content);
+      cloudWorkouts = parsed.workouts;
+      cloudDeleted = parsed.deleted;
     }
-    
+
     // 3. 执行无损去重新旧合并
     if (statusLabel) statusLabel.textContent = "正在融合双端记录...";
     const localWorkouts = state.workouts || [];
+
+    // 先合并双端的删除墓碑 (任意一端删除过的记录，两端都视为已删除)
+    const mergedDeleted = pruneTombstones({ ...cloudDeleted, ...state.deletedIds });
+
     const mergedMap = new Map();
-    
     // 放入云端数据
     cloudWorkouts.forEach(w => mergedMap.set(w.id, w));
     // 放入本地数据 (本地修改有更高保留优先权)
     localWorkouts.forEach(w => mergedMap.set(w.id, w));
-    
+    // 剔除所有已被删除的记录，防止被删记录借合并"复活"
+    Object.keys(mergedDeleted).forEach(id => mergedMap.delete(id));
+
     const mergedList = Array.from(mergedMap.values()).sort((a, b) => new Date(b.date) - new Date(a.date));
-    
+
     // 更新本地 state 和 localStorage
     state.workouts = mergedList;
+    state.deletedIds = mergedDeleted;
     localStorage.setItem("chocozap_workouts", JSON.stringify(state.workouts));
-    
-    // 4. 将合并后的最新数据推回云端 Gist
+    localStorage.setItem("chocozap_deleted", JSON.stringify(state.deletedIds));
+
+    // 4. 将合并后的最新数据推回云端 Gist (新格式同时携带记录和删除墓碑)
     if (statusLabel) statusLabel.textContent = "正在上传备份到云端...";
     const patchResponse = await fetch(`https://api.github.com/gists/${gistId}`, {
       method: "PATCH",
@@ -1475,7 +1593,7 @@ async function syncWithGithub(isSilent = false) {
       body: JSON.stringify({
         files: {
           "chocozap_workouts.json": {
-            "content": JSON.stringify(state.workouts, null, 2)
+            "content": JSON.stringify({ workouts: state.workouts, deleted: state.deletedIds }, null, 2)
           }
         }
       })
@@ -1490,7 +1608,7 @@ async function syncWithGithub(isSilent = false) {
     const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
     
     if (statusLabel) {
-      statusLabel.textContent = `同步成功 (云端共 ${cloudWorkouts.length} 条记录，于 ${timeStr})`;
+      statusLabel.textContent = `同步成功 (合并后共 ${state.workouts.length} 条记录，于 ${timeStr})`;
       statusLabel.style.color = "var(--neon-green)";
       statusLabel.style.textShadow = "0 0 8px rgba(57, 255, 20, 0.3)";
     }

@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Noto+Sans+SC:wght@300;400;500;700;900&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=1.0.5">
+  <link rel="stylesheet" href="style.css?v=1.1.0">
 </head>
 <body>
   <!-- 动态流体液体背景 -->
@@ -29,7 +29,7 @@
         <span class="logo-accent">Choco</span><span class="logo-main">ZAP</span>
         <span class="logo-badge">Pro</span>
       </div>
-      <div class="header-date" id="current-date">2026年7月3日</div>
+      <div class="header-date" id="current-date"></div>
     </header>
 
     <!-- 应用主体视图区域 -->
@@ -391,6 +391,12 @@
               </div>
             </div>
 
+            <!-- 打卡日期 (支持补记过去漏打的卡) -->
+            <div class="form-row">
+              <label>打卡日期 <small>—— 默认今天，也可以选过去的日期补记</small></label>
+              <input type="date" id="input-workout-date" class="glass-input">
+            </div>
+
             <!-- 通用备注 -->
             <div class="form-row">
               <label>运动备注 / 心得</label>
@@ -620,6 +626,6 @@
     </nav>
   </div>
 
-  <script src="app.js?v=1.0.5"></script>
+  <script src="app.js?v=1.1.0"></script>
 </body>
 </html>
