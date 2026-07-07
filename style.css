@@ -703,6 +703,19 @@ body {
   box-shadow: inset 0 2px 4px rgba(0,0,0,0.1), 0 0 12px rgba(255, 208, 0, 0.15);
 }
 
+/* 日期选择器：让浏览器原生日历弹层使用深色主题，与整体风格统一 */
+input[type="date"].glass-input {
+  color-scheme: dark;
+  width: 100%;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+input[type="date"].glass-input::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  filter: invert(0.8);
+}
+
 /* 玻璃下拉选择 */
 .glass-select-wrapper {
   position: relative;
