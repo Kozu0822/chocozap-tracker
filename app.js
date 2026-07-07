@@ -1241,16 +1241,14 @@ function buildStructuredPlanInstruction() {
     .join('\n');
 
   return `
-【结构化训练计划输出格式 —— 仅在你本次回复中给出了具体的训练动作/菜单/组数重量等可执行推荐时才需要输出】
-如果我这次提问是在请求你给出具体可执行的训练动作安排（比如"帮我安排今天的训练""给我一套菜单""接下来练什么"），
+【结构化训练计划输出格式 —— 本次请求就是在向你要一份具体可执行的训练菜单，必须输出】
 请在你正常的、给人看的回复内容结束之后，另起一行，追加一个由 <!--CHOCOZAP_PLAN_START--> 和 <!--CHOCOZAP_PLAN_END--> 包裹的 JSON 数组，
 数组每一项代表一个推荐动作，格式为：
 { "type": "器材英文标识", "label": "中文名称", "intensity": "给人看的强度描述文字，例如 50kg x 12次 x 3组", "details": { ...结构化数值字段 } }
 type 必须是以下英文标识之一，且 details 字段必须严格匹配对应的数值 schema：
 ${typeSchemaStr}
 如果推荐的动作不在上述器材范围内，type 请填 "custom"，details 填 { "name": "动作名称", "value": "关键数据文字", "sets": 组数或null }。
-这段 JSON 是给 App 自动解析用的，不需要在正文里重复解释它，也不要用 Markdown 代码块包裹，直接是纯 JSON 数组文本。
-如果这次回复只是分析、聊天、解答疑问，没有给出具体训练菜单，则完全不要输出这个代码块。`;
+这段 JSON 是给 App 自动解析用的，不需要在正文里重复解释它，也不要用 Markdown 代码块包裹，直接是纯 JSON 数组文本，且这次务必要输出。`;
 }
 
 // 从 AI 回复文本中提取结构化训练计划 JSON 块，返回清理后的正文 + 计划数组
@@ -1599,6 +1597,10 @@ function saveAdjustedRecommendation() {
   localStorage.setItem("chocozap_ai_recommendations", JSON.stringify(state.aiRecommendations));
   closeAdjustRecDialog();
   renderAiRecommendations();
+
+  if (state.settings.githubToken) {
+    syncWithGithub(true);
+  }
 }
 
 // 点击"完成"：把推荐条目落地为一条今天的真实打卡记录
@@ -1645,8 +1647,7 @@ function acceptAiRecommendation(id) {
   state.workouts.unshift(newWorkout);
   localStorage.setItem("chocozap_workouts", JSON.stringify(state.workouts));
 
-  state.aiRecommendations = state.aiRecommendations.filter(r => r.id !== id);
-  localStorage.setItem("chocozap_ai_recommendations", JSON.stringify(state.aiRecommendations));
+  removeAiRecommendation(id);
 
   if (state.settings.githubToken) {
     syncWithGithub(true);
@@ -1659,9 +1660,34 @@ function acceptAiRecommendation(id) {
 
 // 点击"拒绝"：仅从推荐列表移除，不产生任何打卡记录
 function rejectAiRecommendation(id) {
-  state.aiRecommendations = state.aiRecommendations.filter(r => r.id !== id);
-  localStorage.setItem("chocozap_ai_recommendations", JSON.stringify(state.aiRecommendations));
+  removeAiRecommendation(id);
   renderAiRecommendations();
+
+  // 拒绝也要同步到云端，否则另一台设备还是会看到这条已经被拒绝的推荐
+  if (state.settings.githubToken) {
+    syncWithGithub(true);
+  }
+}
+
+// 把一条推荐从待处理列表移除，并写入墓碑——
+// 推荐条目也会参与云同步，如果不打墓碑，云端旧数据合并回来时会让已完成/已拒绝的推荐"复活"
+// (跟打卡记录删除时是同一套机制，两者的 id 前缀不同，可以安全共用同一张墓碑表)
+function removeAiRecommendation(id) {
+  state.aiRecommendations = state.aiRecommendations.filter(r => r.id !== id);
+  state.deletedIds[id] = Date.now();
+  localStorage.setItem("chocozap_ai_recommendations", JSON.stringify(state.aiRecommendations));
+  localStorage.setItem("chocozap_deleted", JSON.stringify(state.deletedIds));
+}
+
+// 生成新一轮训练菜单时，替换掉所有尚未处理的旧推荐（而不是无限堆积）。
+// 被替换掉的旧条目也要打墓碑，避免云端合并时被旧数据带回来
+function setAiRecommendations(rawItems) {
+  const now = Date.now();
+  state.aiRecommendations.forEach(rec => { state.deletedIds[rec.id] = now; });
+  localStorage.setItem("chocozap_deleted", JSON.stringify(state.deletedIds));
+
+  state.aiRecommendations = [];
+  addAiRecommendations(rawItems);
 }
 
 // 模式 B: 一键生成 Prompt 并弹出弹窗供用户复制
@@ -1817,21 +1843,40 @@ function renderChatSessionMessages() {
   });
 }
 
-// 模式 A: API 直连对话
+// 模式 A: API 直连对话 —— 普通聊天，不附带"结构化训练计划"输出指令，
+// 所以 AI 不会在闲聊/答疑时擅自甩出一份训练菜单
 async function sendChatMessage() {
   const chatInput = document.getElementById("chat-input");
   const userText = chatInput.value.trim();
   if (!userText) return;
+  chatInput.value = "";
 
+  await callGeminiCoach(userText, { wantPlan: false });
+}
+
+// 点击"生成训练菜单"按钮：唯一会真正要求 AI 输出结构化训练计划的入口，
+// 用户不点这个按钮，AI 就不会主动给出可以一键打卡的推荐菜单
+async function requestTrainingPlan() {
+  if (!state.settings.apiKey) {
+    alert('生成训练菜单需要先在"设置"页配置 Gemini API Key（免 Key 的"打包健身数据"模式无法自动生成推荐列表，只能手动复制文字）。');
+    switchTab('settings');
+    return;
+  }
+
+  const userText = "请帮我安排一份今天可以在 ChocoZAP 完成的具体训练菜单，包含项目、重量、组数等可执行的强度安排。";
+  await callGeminiCoach(userText, { wantPlan: true });
+}
+
+// 两个入口共用的请求逻辑：发消息、带上下文调用 Gemini、渲染回复、（可选）解析结构化计划
+async function callGeminiCoach(userText, { wantPlan }) {
   const apiKey = state.settings.apiKey;
   const model = state.settings.apiModel || 'gemini-2.5-flash';
   const session = getActiveChatSession();
 
   // 1. 将用户的提问呈现在 UI 聊天框中，并计入当前会话历史
   appendMessage("user", "你", userText);
-  chatInput.value = "";
 
-  // 2. 检测 API Key 是否配置
+  // 2. 检测 API Key 是否配置 (走到这里说明是普通聊天；生成菜单按钮已经在 requestTrainingPlan 里提前拦截过)
   if (!apiKey) {
     setTimeout(() => {
       appendMessage("ai", "Gemini Coach", `未检测到您的 API Key。
@@ -1842,8 +1887,9 @@ async function sendChatMessage() {
     return;
   }
 
-  // 3. 系统指令：健身数据背景 + 器材白名单约束 + 结构化训练计划输出格式
-  const systemPromptText = generateWorkoutSummaryPrompt() + "\n" + buildStructuredPlanInstruction();
+  // 3. 系统指令：健身数据背景 + 器材白名单约束，仅在明确请求菜单时才附加结构化输出格式指令
+  let systemPromptText = generateWorkoutSummaryPrompt();
+  if (wantPlan) systemPromptText += "\n" + buildStructuredPlanInstruction();
 
   // 4. 把当前会话的历史消息转换为 Gemini 多轮对话格式，实现真正的"继续聊下去"
   //    (而不是每次都把整段历史重新塞进单条 user 消息里)
@@ -1853,7 +1899,7 @@ async function sendChatMessage() {
   }));
 
   // 5. 显示 AI 正在思考 (Typing...)
-  const tempBubbleId = appendMessage("ai", "Gemini Coach", "正在思考中，请稍候...", true);
+  const tempBubbleId = appendMessage("ai", "Gemini Coach", wantPlan ? "正在为你安排今日训练菜单，请稍候..." : "正在思考中，请稍候...", true);
 
   try {
     // Google Gemini API Beta 直连请求
@@ -1883,12 +1929,17 @@ async function sendChatMessage() {
       // 无损拼接所有 parts 的 text，防止多 part 返回时导致的话语中途截断
       const rawReplyText = data.candidates[0].content.parts.map(part => part.text || "").join("");
 
-      // 提取结构化训练计划 (如果本次回复包含具体推荐)，正文里不展示这段 JSON
+      // 提取结构化训练计划 (只有 wantPlan 时才会真的有这段内容)，正文里不展示这段 JSON
       const { cleanedText, items } = extractAiPlanFromReply(rawReplyText);
       let displayText = cleanedText;
-      if (items.length > 0) {
-        addAiRecommendations(items);
+      if (wantPlan && items.length > 0) {
+        // 新一轮菜单会替换掉之前还没处理的旧推荐，而不是无限堆积
+        setAiRecommendations(items);
+        // 立即静默同步到云端，避免"电脑上刚生成的菜单，手机上还没看到"
+        if (state.settings.githubToken) syncWithGithub(true);
         displayText += `\n\n✅ 已为你生成 ${items.length} 条训练推荐，可以在首页「Gemini的推荐」模块查看，点击完成会自动生成今天的打卡记录。`;
+      } else if (wantPlan) {
+        displayText += `\n\n⚠️ 这次没能解析出结构化菜单，可以再点一次"生成训练菜单"重试。`;
       }
       appendMessage("ai", "Gemini Coach", displayText);
     } else {
@@ -2116,10 +2167,11 @@ async function resetDatabase() {
   const token = state.settings.githubToken;
   const gistId = state.settings.githubGistId;
 
-  // 1. 把当前本地全部记录写入删除墓碑，防止其他设备把老数据同步回来
+  // 1. 把当前本地全部记录 + 待处理的 AI 推荐都写入删除墓碑，防止其他设备把老数据同步回来
   const now = Date.now();
   const tombstones = { ...state.deletedIds };
   (state.workouts || []).forEach(w => { tombstones[w.id] = now; });
+  (state.aiRecommendations || []).forEach(r => { tombstones[r.id] = now; });
 
   // 2. 如果已配置云端同步，必须同步清空 GitHub Gist 云端数据，否则刷新后会自动拉回
   if (token && gistId) {
@@ -2136,7 +2188,7 @@ async function resetDatabase() {
     };
 
     try {
-      // 先拉取云端，把云端已有而本地没有的记录 ID 也一并写入墓碑
+      // 先拉取云端，把云端已有而本地没有的记录/推荐 ID 也一并写入墓碑
       const getResponse = await fetch(`https://api.github.com/gists/${gistId}`, {
         method: "GET",
         headers: headers
@@ -2147,6 +2199,7 @@ async function resetDatabase() {
         if (syncFile && syncFile.content) {
           const parsed = parseCloudContent(syncFile.content);
           parsed.workouts.forEach(w => { tombstones[w.id] = now; });
+          parsed.recommendations.forEach(r => { tombstones[r.id] = now; });
           Object.keys(parsed.deleted).forEach(id => {
             if (!tombstones[id]) tombstones[id] = parsed.deleted[id];
           });
@@ -2159,7 +2212,7 @@ async function resetDatabase() {
         body: JSON.stringify({
           files: {
             "chocozap_workouts.json": {
-              "content": JSON.stringify({ workouts: [], deleted: tombstones }, null, 2)
+              "content": JSON.stringify({ workouts: [], recommendations: [], deleted: tombstones }, null, 2)
             }
           }
         })
@@ -2174,8 +2227,9 @@ async function resetDatabase() {
     }
   }
 
-  // 3. 清空本地历史并保存墓碑，保持 has_run_before 状态，防止重新加载时写入 mock 数据
+  // 3. 清空本地历史/推荐并保存墓碑，保持 has_run_before 状态，防止重新加载时写入 mock 数据
   localStorage.setItem("chocozap_workouts", JSON.stringify([]));
+  localStorage.setItem("chocozap_ai_recommendations", JSON.stringify([]));
   localStorage.setItem("chocozap_deleted", JSON.stringify(tombstones));
   localStorage.setItem("chocozap_has_run_before", "true");
 
@@ -2199,9 +2253,10 @@ window.addEventListener("resize", () => {
 // 9. GitHub Gist 云端自动同步功能 (GitHub Gist Cloud Sync)
 // ==========================================================================
 
-// 解析云端 Gist 文件内容：兼容旧版纯数组格式和新版 { workouts, deleted } 对象格式
+// 解析云端 Gist 文件内容：兼容旧版纯数组格式和新版 { workouts, recommendations, deleted } 对象格式
 function parseCloudContent(content) {
   let workouts = [];
+  let recommendations = [];
   let deleted = {};
   try {
     const parsed = JSON.parse(content);
@@ -2209,12 +2264,13 @@ function parseCloudContent(content) {
       workouts = parsed;
     } else if (parsed && typeof parsed === 'object') {
       if (Array.isArray(parsed.workouts)) workouts = parsed.workouts;
+      if (Array.isArray(parsed.recommendations)) recommendations = parsed.recommendations;
       if (parsed.deleted && typeof parsed.deleted === 'object') deleted = parsed.deleted;
     }
   } catch (e) {
     // 内容损坏时视为空
   }
-  return { workouts, deleted };
+  return { workouts, recommendations, deleted };
 }
 
 // 墓碑保留 180 天后自动清理，防止无限膨胀 (届时所有设备早已同步过删除操作)
@@ -2352,18 +2408,21 @@ async function syncWithGithub(isSilent = false) {
     const syncFile = gistDetail.files["chocozap_workouts.json"];
 
     let cloudWorkouts = [];
+    let cloudRecommendations = [];
     let cloudDeleted = {};
     if (syncFile && syncFile.content) {
       const parsed = parseCloudContent(syncFile.content);
       cloudWorkouts = parsed.workouts;
+      cloudRecommendations = parsed.recommendations;
       cloudDeleted = parsed.deleted;
     }
 
     // 3. 执行无损去重新旧合并
     if (statusLabel) statusLabel.textContent = "正在融合双端记录...";
     const localWorkouts = state.workouts || [];
+    const localRecommendations = state.aiRecommendations || [];
 
-    // 先合并双端的删除墓碑 (任意一端删除过的记录，两端都视为已删除)
+    // 先合并双端的删除墓碑 (任意一端删除过的记录/推荐，两端都视为已删除；两者 id 前缀不同不会互相冲突)
     const mergedDeleted = pruneTombstones({ ...cloudDeleted, ...state.deletedIds });
 
     const mergedMap = new Map();
@@ -2376,13 +2435,22 @@ async function syncWithGithub(isSilent = false) {
 
     const mergedList = Array.from(mergedMap.values()).sort((a, b) => new Date(b.date) - new Date(a.date));
 
+    // AI 推荐列表走同样的"按 id 合并 + 墓碑过滤"逻辑，已完成/已拒绝的条目不会被云端旧数据带回来
+    const mergedRecMap = new Map();
+    cloudRecommendations.forEach(r => mergedRecMap.set(r.id, r));
+    localRecommendations.forEach(r => mergedRecMap.set(r.id, r));
+    Object.keys(mergedDeleted).forEach(id => mergedRecMap.delete(id));
+    const mergedRecList = Array.from(mergedRecMap.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
     // 更新本地 state 和 localStorage
     state.workouts = mergedList;
+    state.aiRecommendations = mergedRecList;
     state.deletedIds = mergedDeleted;
     localStorage.setItem("chocozap_workouts", JSON.stringify(state.workouts));
+    localStorage.setItem("chocozap_ai_recommendations", JSON.stringify(state.aiRecommendations));
     localStorage.setItem("chocozap_deleted", JSON.stringify(state.deletedIds));
 
-    // 4. 将合并后的最新数据推回云端 Gist (新格式同时携带记录和删除墓碑)
+    // 4. 将合并后的最新数据推回云端 Gist (新格式同时携带记录、AI 推荐和删除墓碑)
     if (statusLabel) statusLabel.textContent = "正在上传备份到云端...";
     const patchResponse = await fetch(`https://api.github.com/gists/${gistId}`, {
       method: "PATCH",
@@ -2390,7 +2458,7 @@ async function syncWithGithub(isSilent = false) {
       body: JSON.stringify({
         files: {
           "chocozap_workouts.json": {
-            "content": JSON.stringify({ workouts: state.workouts, deleted: state.deletedIds }, null, 2)
+            "content": JSON.stringify({ workouts: state.workouts, recommendations: state.aiRecommendations, deleted: state.deletedIds }, null, 2)
           }
         }
       })
@@ -2413,7 +2481,8 @@ async function syncWithGithub(isSilent = false) {
     // 刷新页面渲染
     updateStats();
     renderHistory();
-    
+    renderAiRecommendations();
+
     if (!isSilent) {
       alert("🎉 双端数据云同步成功！打卡记录已无损合并。");
     }
