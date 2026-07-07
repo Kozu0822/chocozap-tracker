@@ -322,6 +322,8 @@ function switchTab(tabName) {
     updateStats();
   } else if (tabName === 'history') {
     renderHistory();
+  } else if (tabName === 'trends') {
+    renderTrendsTab();
   }
 }
 
@@ -705,7 +707,10 @@ function saveWorkout(event) {
   // 插入到记录库最前端并存储
   state.workouts.unshift(newWorkout);
   localStorage.setItem("chocozap_workouts", JSON.stringify(state.workouts));
-  
+
+  // 检查这条新记录是否刷新了 PR
+  checkAndCelebratePR(newWorkout);
+
   // 重置表单备注
   document.getElementById("input-notes").value = "";
   
@@ -723,8 +728,12 @@ function saveWorkout(event) {
   setTimeout(() => {
     submitBtn.innerHTML = originalText;
     submitBtn.style.background = "";
-    // 跳转至历史页签
-    switchTab('history');
+    // 跳转至历史页签——但如果用户在这 1.2 秒内已经手动切到了别的页签(比如连续打卡下一个项目)，
+    // 就不要把他们硬拽回历史页，尊重用户当前所在的位置
+    const stillOnLogTab = document.getElementById("view-log").classList.contains("active");
+    if (stillOnLogTab) {
+      switchTab('history');
+    }
   }, 1200);
 }
 
@@ -897,6 +906,263 @@ function renderTrendMiniBars(containerId, values, unit) {
       </div>
     `;
   }).join('');
+}
+
+// ==========================================================================
+// 5.1 "趋势"页签：打卡日历 / 身体部位统计 / PR 个人最佳纪录
+// ==========================================================================
+
+// 每种运动项目归属的身体部位/训练类别，用于身体部位统计模块
+const BODY_PART_MAP = {
+  leg_press: '腿部',
+  shoulder_press: '肩部',
+  chest_press: '胸部',
+  preacher_curl: '手臂',
+  lat_pulldown: '背部',
+  situps: '核心',
+  spin_bike: '有氧',
+  treadmill: '有氧',
+  massage_chair: '放松恢复',
+  custom: '其他'
+};
+
+// PR (个人最佳纪录) 覆盖范围：力量类记重量，有氧类记时长。
+// 力量类要求 sets > 1 (连续完成2组以上) 才计入，避免单次爆发力被误判为可持续的真实水平；
+// 有氧类没有"组"的概念，时长本身就能直接反映真实水平，不需要额外门槛
+const PR_WEIGHT_TYPES = ['leg_press', 'shoulder_press', 'chest_press', 'preacher_curl', 'lat_pulldown'];
+const PR_DURATION_TYPES = ['treadmill', 'spin_bike'];
+
+const PR_TYPE_LABELS = {
+  leg_press: '腿举', shoulder_press: '肩推', chest_press: '胸推',
+  preacher_curl: '牧师椅', lat_pulldown: '高位下拉',
+  treadmill: '跑步机', spin_bike: '动感单车'
+};
+
+const PR_TYPE_ICONS = {
+  leg_press: '🦵', shoulder_press: '💪', chest_press: '🏋️',
+  preacher_curl: '🧘', lat_pulldown: '🔽', treadmill: '🏃', spin_bike: '🚴'
+};
+
+// 从单条打卡记录里提取"是否够格参与 PR 评比"的数值，不够格 (比如力量只做了1组) 返回 null
+function getQualifyingPRValue(workout) {
+  const d = workout.details || {};
+  if (PR_WEIGHT_TYPES.includes(workout.type)) {
+    if (!d.sets || d.sets <= 1 || !d.weight) return null;
+    return { value: d.weight, unit: 'kg' };
+  }
+  if (PR_DURATION_TYPES.includes(workout.type)) {
+    if (!d.time) return null;
+    return { value: d.time, unit: '分钟' };
+  }
+  return null;
+}
+
+// 计算某个类型当前的最佳纪录；excludeWorkoutId 用于"看看这条记录是否打破了它之前的最高值"
+function computeBestForType(type, excludeWorkoutId) {
+  let best = null;
+  state.workouts.forEach(w => {
+    if (w.type !== type) return;
+    if (excludeWorkoutId && w.id === excludeWorkoutId) return;
+    const q = getQualifyingPRValue(w);
+    if (!q) return;
+    if (!best || q.value > best.value) {
+      best = { value: q.value, unit: q.unit, date: w.date };
+    }
+  });
+  return best;
+}
+
+// 计算所有 PR 类型当前的最佳纪录，供"个人最佳纪录"模块渲染
+function computeAllPersonalRecords() {
+  return [...PR_WEIGHT_TYPES, ...PR_DURATION_TYPES]
+    .map(type => ({ type, best: computeBestForType(type) }))
+    .filter(r => r.best);
+}
+
+// 打卡 / 完成 AI 推荐后调用：检查这条新记录是否刷新了 PR，是的话弹出庆祝提示
+function checkAndCelebratePR(workout) {
+  const q = getQualifyingPRValue(workout);
+  if (!q) return;
+
+  const priorBest = computeBestForType(workout.type, workout.id);
+  if (priorBest && q.value <= priorBest.value) return; // 没有刷新纪录
+
+  const label = PR_TYPE_LABELS[workout.type] || workout.type;
+  const icon = PR_TYPE_ICONS[workout.type] || '🏆';
+  const msg = priorBest
+    ? `${icon} 新纪录！${label} ${q.value}${q.unit}（超越 ${priorBest.value}${q.unit}）`
+    : `${icon} 首个纪录！${label} ${q.value}${q.unit}`;
+  showPRToast(msg);
+}
+
+// 展示 PR 新纪录提示条 (挂在 app-shell 下的 fixed 元素，不受页签切换/滚动位置影响)
+let prToastTimer = null;
+function showPRToast(message) {
+  const toast = document.getElementById("pr-toast");
+  if (!toast) return;
+  toast.textContent = message;
+  toast.classList.remove("show"); // 连续触发时先强制重置一次，保证动画能重新播放
+  void toast.offsetWidth; // 触发重排
+  toast.classList.add("show");
+
+  clearTimeout(prToastTimer);
+  prToastTimer = setTimeout(() => {
+    toast.classList.remove("show");
+  }, 3800);
+}
+
+// 切换到"趋势"页签时统一刷新三个子模块
+function renderTrendsTab() {
+  renderCalendarHeatmap();
+  renderBodyPartStats();
+  renderPersonalRecords();
+}
+
+// ---- 打卡日历 (GitHub 贡献图风格，近53周) ----
+function renderCalendarHeatmap() {
+  const container = document.getElementById("calendar-heatmap-inner");
+  const scrollWrapper = document.getElementById("calendar-heatmap-scroll");
+  if (!container) return;
+
+  const WEEKS = 53;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // 让最右侧一列固定落在"本周"，起点回推到 53 周前那一周的周日 (跟 GitHub 贡献图对齐方式一致)
+  const todayDow = today.getDay(); // 0=周日
+  const gridEnd = new Date(today);
+  gridEnd.setDate(gridEnd.getDate() + (6 - todayDow));
+  const gridStart = new Date(gridEnd);
+  gridStart.setDate(gridStart.getDate() - (WEEKS * 7 - 1));
+
+  // 统计每天的打卡次数
+  const countByDate = {};
+  state.workouts.forEach(w => {
+    countByDate[w.date] = (countByDate[w.date] || 0) + 1;
+  });
+
+  const monthLabels = [];
+  let lastMonth = -1;
+  const weekColumns = [];
+
+  for (let w = 0; w < WEEKS; w++) {
+    const days = [];
+    for (let d = 0; d < 7; d++) {
+      const cellDate = new Date(gridStart);
+      cellDate.setDate(cellDate.getDate() + w * 7 + d);
+      const dateStr = getLocalDateString(cellDate);
+      const isFuture = cellDate > today;
+      const count = countByDate[dateStr] || 0;
+      days.push({ date: dateStr, count, isFuture });
+
+      if (d === 0 && cellDate.getDate() <= 7 && cellDate <= today && cellDate.getMonth() !== lastMonth) {
+        monthLabels.push({ weekIndex: w, label: `${cellDate.getMonth() + 1}月` });
+        lastMonth = cellDate.getMonth();
+      }
+    }
+    weekColumns.push(days);
+  }
+
+  const levelFor = (count) => {
+    if (count <= 0) return 0;
+    if (count === 1) return 1;
+    if (count === 2) return 2;
+    if (count === 3) return 3;
+    return 4;
+  };
+
+  let monthRowHtml = `<div class="calendar-month-row">`;
+  for (let w = 0; w < WEEKS; w++) {
+    const monthEntry = monthLabels.find(m => m.weekIndex === w);
+    monthRowHtml += `<span class="calendar-month-label">${monthEntry ? monthEntry.label : ''}</span>`;
+  }
+  monthRowHtml += `</div>`;
+
+  let gridHtml = `<div class="calendar-grid">`;
+  weekColumns.forEach(days => {
+    gridHtml += `<div class="calendar-week-col">`;
+    days.forEach(day => {
+      if (day.isFuture) {
+        gridHtml += `<i class="heatmap-cell level-future"></i>`;
+      } else {
+        gridHtml += `<i class="heatmap-cell level-${levelFor(day.count)}" title="${day.date}：${day.count}项运动"></i>`;
+      }
+    });
+    gridHtml += `</div>`;
+  });
+  gridHtml += `</div>`;
+
+  container.innerHTML = monthRowHtml + gridHtml;
+
+  // 默认滚动到最右侧 (今天所在的位置)，跟 GitHub 贡献图一样默认看到最新的部分
+  if (scrollWrapper) {
+    requestAnimationFrame(() => { scrollWrapper.scrollLeft = scrollWrapper.scrollWidth; });
+  }
+}
+
+// ---- 身体部位统计 (近30天) ----
+function renderBodyPartStats() {
+  const container = document.getElementById("body-part-list");
+  if (!container) return;
+
+  const today = new Date();
+  const cutoff = new Date(today);
+  cutoff.setDate(cutoff.getDate() - 29);
+  const cutoffStr = getLocalDateString(cutoff);
+
+  const counts = {};
+  state.workouts.forEach(w => {
+    if (w.date < cutoffStr) return;
+    const part = BODY_PART_MAP[w.type] || '其他';
+    counts[part] = (counts[part] || 0) + 1;
+  });
+
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+
+  if (entries.length === 0) {
+    container.innerHTML = `<div class="empty-state"><div class="empty-emoji">🗒️</div><p>最近30天还没有打卡记录</p></div>`;
+    return;
+  }
+
+  const maxCount = Math.max(...entries.map(e => e[1]));
+
+  container.innerHTML = entries.map(([part, count]) => {
+    const pct = Math.round((count / maxCount) * 100);
+    return `
+      <div class="body-part-row">
+        <span class="body-part-name">${part}</span>
+        <div class="body-part-bar-track">
+          <div class="body-part-bar-fill" style="width:${pct}%"></div>
+        </div>
+        <span class="body-part-count">${count}次</span>
+      </div>
+    `;
+  }).join('');
+}
+
+// ---- PR 个人最佳纪录列表 ----
+function renderPersonalRecords() {
+  const container = document.getElementById("pr-list");
+  if (!container) return;
+
+  const records = computeAllPersonalRecords();
+  if (records.length === 0) {
+    container.innerHTML = `<div class="empty-state"><div class="empty-emoji">🏆</div><p>还没有达标的 PR 记录，力量项目练到连续2组以上就会被记录哦</p></div>`;
+    return;
+  }
+
+  container.innerHTML = records.map(({ type, best }) => `
+    <div class="pr-item">
+      <div class="pr-item-left">
+        <div class="pr-item-avatar">${PR_TYPE_ICONS[type] || '🏆'}</div>
+        <div class="pr-item-details">
+          <span class="pr-item-title">${PR_TYPE_LABELS[type] || type}</span>
+          <span class="pr-item-date">${best.date}</span>
+        </div>
+      </div>
+      <span class="pr-item-value">${best.value}${best.unit}</span>
+    </div>
+  `).join('');
 }
 
 // 原生绘制发光的 SVG 趋势折线图
@@ -1646,6 +1912,9 @@ function acceptAiRecommendation(id) {
 
   state.workouts.unshift(newWorkout);
   localStorage.setItem("chocozap_workouts", JSON.stringify(state.workouts));
+
+  // 检查这条完成的 AI 推荐是否刷新了 PR
+  checkAndCelebratePR(newWorkout);
 
   removeAiRecommendation(id);
 
