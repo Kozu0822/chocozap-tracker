@@ -295,7 +295,11 @@ body {
   display: none;
   flex-direction: column;
   gap: 20px;
-  animation: viewFadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  /* 注意：不用 forwards —— fill-mode:forwards 会让动画结束后残留 transform:translateY(0) scale(1)，
+     即使视觉上等价于"无变换"，也会让这个 section 变成 position:fixed 子元素(比如弹窗)的定位上下文，
+     导致弹窗被"焊死"在滚动到的当前位置而不是贴着视口。动画结束状态本就等价于无变换，去掉 forwards
+     不影响观感，只是让 transform 在动画结束后正确回落为 none */
+  animation: viewFadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .app-view.active {
@@ -789,6 +793,7 @@ body {
 .ai-rec-actions {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .ai-rec-btn {
@@ -818,6 +823,16 @@ body {
 .ai-rec-reject:hover {
   background: rgba(255, 59, 48, 0.15);
   color: var(--danger-color);
+}
+
+.ai-rec-adjust {
+  background: rgba(var(--surface-rgb), 0.08);
+  color: var(--text-secondary);
+}
+
+.ai-rec-adjust:hover {
+  background: rgba(0, 240, 255, 0.15);
+  color: var(--neon-blue);
 }
 
 /* 快捷开始 */
@@ -1664,7 +1679,9 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
 
 /* 浮动弹窗 (Overlay Dialog) */
 .dialog-overlay {
-  position: absolute;
+  /* 用 fixed 而不是 absolute：absolute 会相对可滚动的 .app-body 内容定位，
+     页面滚动后再打开弹窗，位置会跟着滚动偏移，脱离当前视口 */
+  position: fixed;
   top: 0;
   left: 0;
   right: 0;
@@ -1716,6 +1733,7 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  overflow-y: auto;
 }
 
 .dialog-body p {
