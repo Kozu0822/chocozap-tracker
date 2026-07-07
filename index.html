@@ -7,10 +7,17 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="ChocoZAP">
   <title>ChocoZAP 智能健身助手</title>
+  <!-- 主题在样式表加载前就绪，避免日间/夜间切换时出现"先深后浅"的闪烁 -->
+  <script>
+    (function () {
+      var saved = localStorage.getItem("chocozap_theme") || "dark";
+      document.documentElement.setAttribute("data-theme", saved);
+    })();
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Noto+Sans+SC:wght@300;400;500;700;900&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=1.1.0">
+  <link rel="stylesheet" href="style.css?v=1.2.0">
 </head>
 <body>
   <!-- 动态流体液体背景 -->
@@ -29,7 +36,10 @@
         <span class="logo-accent">Choco</span><span class="logo-main">ZAP</span>
         <span class="logo-badge">Pro</span>
       </div>
-      <div class="header-date" id="current-date"></div>
+      <div class="header-right">
+        <button class="theme-toggle-btn" id="theme-toggle-btn" onclick="toggleTheme()" title="切换日间/夜间模式">🌙</button>
+        <div class="header-date" id="current-date"></div>
+      </div>
     </header>
 
     <!-- 应用主体视图区域 -->
@@ -100,6 +110,43 @@
           <div class="chart-wrapper" id="weekly-chart-container">
             <!-- 由 JS 渲染的 SVG 折线图 -->
           </div>
+        </div>
+
+        <!-- 力量/有氧趋势分析 -->
+        <div class="glass trend-card">
+          <div class="chart-header">
+            <h3>训练趋势分析</h3>
+            <span class="chart-subtitle">近30天占比 / 近4周趋势</span>
+          </div>
+
+          <div class="trend-proportion-wrapper">
+            <div class="trend-proportion-bar" id="trend-proportion-bar"></div>
+            <div class="trend-legend">
+              <span class="trend-legend-item"><i class="trend-dot trend-dot-strength"></i><span id="trend-legend-strength">力量 0次 (0%)</span></span>
+              <span class="trend-legend-item"><i class="trend-dot trend-dot-cardio"></i><span id="trend-legend-cardio">有氧 0次 (0%)</span></span>
+              <span class="trend-legend-item"><i class="trend-dot trend-dot-other"></i><span id="trend-legend-other">其他 0次 (0%)</span></span>
+            </div>
+          </div>
+
+          <div class="trend-mini-charts">
+            <div class="trend-mini-chart-block">
+              <span class="trend-mini-chart-title">力量容量趋势 (kg)</span>
+              <div class="trend-mini-bars" id="trend-volume-bars"></div>
+            </div>
+            <div class="trend-mini-chart-block">
+              <span class="trend-mini-chart-title">有氧时长趋势 (分钟)</span>
+              <div class="trend-mini-bars" id="trend-cardio-bars"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Gemini 训练推荐 (只有存在待处理推荐时才显示) -->
+        <div class="glass ai-recommendation-card" id="ai-recommendation-section" style="display: none;">
+          <div class="chart-header">
+            <h3>Gemini的推荐</h3>
+            <span class="chart-subtitle">来自 AI 教练的训练建议</span>
+          </div>
+          <div class="ai-rec-list" id="ai-recommendation-list"></div>
         </div>
 
         <!-- 常用器材快捷键 -->
@@ -221,6 +268,23 @@
                     <input type="number" id="input-sets" value="3" min="1" max="20">
                     <button type="button" class="step-btn increase" onclick="adjustValue('input-sets', 1)">+</button>
                   </div>
+                  <!-- 预设快捷组数 -->
+                  <div class="quick-presets">
+                    <button type="button" class="preset-tag" onclick="setPreset('input-sets', 1)">1组</button>
+                    <button type="button" class="preset-tag" onclick="setPreset('input-sets', 2)">2组</button>
+                    <button type="button" class="preset-tag" onclick="setPreset('input-sets', 3)">3组</button>
+                    <button type="button" class="preset-tag" onclick="setPreset('input-sets', 4)">4组</button>
+                    <button type="button" class="preset-tag" onclick="setPreset('input-sets', 5)">5组</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="form-row">
+                <label>组外次数 <small>—— 可选，正式组数之外力竭/额外加练的次数</small></label>
+                <div class="stepper-input">
+                  <button type="button" class="step-btn decrease" onclick="adjustValue('input-extra-reps', -1)">-</button>
+                  <input type="number" id="input-extra-reps" value="" placeholder="0" min="0" max="100">
+                  <button type="button" class="step-btn increase" onclick="adjustValue('input-extra-reps', 1)">+</button>
                 </div>
               </div>
             </div>
@@ -243,6 +307,21 @@
                     <input type="number" id="input-situps-sets" value="3" min="1" max="20">
                     <button type="button" class="step-btn increase" onclick="adjustValue('input-situps-sets', 1)">+</button>
                   </div>
+                  <div class="quick-presets">
+                    <button type="button" class="preset-tag" onclick="setPreset('input-situps-sets', 1)">1组</button>
+                    <button type="button" class="preset-tag" onclick="setPreset('input-situps-sets', 2)">2组</button>
+                    <button type="button" class="preset-tag" onclick="setPreset('input-situps-sets', 3)">3组</button>
+                    <button type="button" class="preset-tag" onclick="setPreset('input-situps-sets', 4)">4组</button>
+                    <button type="button" class="preset-tag" onclick="setPreset('input-situps-sets', 5)">5组</button>
+                  </div>
+                </div>
+              </div>
+              <div class="form-row">
+                <label>组外次数 <small>—— 可选，正式组数之外力竭/额外加练的次数</small></label>
+                <div class="stepper-input">
+                  <button type="button" class="step-btn decrease" onclick="adjustValue('input-situps-extra-reps', -1)">-</button>
+                  <input type="number" id="input-situps-extra-reps" value="" placeholder="0" min="0" max="200">
+                  <button type="button" class="step-btn increase" onclick="adjustValue('input-situps-extra-reps', 1)">+</button>
                 </div>
               </div>
             </div>
@@ -457,19 +536,19 @@
 
         <!-- AI 对话框 -->
         <div class="glass ai-chat-container">
+          <div class="chat-toolbar">
+            <button class="chat-toolbar-btn" onclick="toggleChatHistoryPanel()" title="历史对话">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              历史对话
+            </button>
+            <button class="chat-toolbar-btn" onclick="startNewChatSession()" title="开始新对话">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+              新对话
+            </button>
+          </div>
+
           <div class="chat-messages" id="chat-messages-container">
-            <div class="chat-bubble ai-bubble">
-              <div class="bubble-header">
-                <span class="bubble-sender">Gemini Coach</span>
-                <span class="bubble-time">系统助手</span>
-              </div>
-              <div class="bubble-text">
-                你好！我是你的 AI 健身教练。我会根据你录入的 ChocoZAP 健身记录来分析你的运动成效、建议合理的负荷与恢复周期，还可以为你定制饮食与锻炼计划。<br><br>
-                <strong>💡 使用方式：</strong><br>
-                1. <strong>API 直连对话</strong>：在“设置”中配置 Gemini API Key，即可直接在下方输入框和我对话！<br>
-                2. <strong>免 API 一键打包</strong>：点击下方的“打包健身数据”，我将生成一份带有你所有打卡细节的 Prompt 模板，你只需复制它即可粘贴至任何 AI 网页端进行分析。
-              </div>
-            </div>
+            <!-- 由 JS 渲染：欢迎语 或 当前会话的历史消息 -->
           </div>
 
           <!-- 输入区域 -->
@@ -485,6 +564,15 @@
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
               </button>
             </div>
+          </div>
+
+          <!-- 历史对话侧滑面板 -->
+          <div class="chat-history-panel" id="chat-history-panel">
+            <div class="chat-history-panel-header">
+              <span>历史对话</span>
+              <button class="dialog-close-btn" onclick="toggleChatHistoryPanel()">×</button>
+            </div>
+            <div class="chat-history-list" id="chat-history-list"></div>
           </div>
         </div>
 
@@ -626,6 +714,6 @@
     </nav>
   </div>
 
-  <script src="app.js?v=1.1.0"></script>
+  <script src="app.js?v=1.2.0"></script>
 </body>
 </html>
