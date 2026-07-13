@@ -2201,48 +2201,242 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
   height: 10px;
 }
 
-/* 身体部位统计 */
-.body-part-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+/* 身体部位统计：环形图 + 图例
+   每个部位固定绑定一个专属颜色（顺序刻意让相邻扇区色相错开），
+   深浅两套主题分别通过了色盲区分度/对比度校验；"其他"刻意用中性灰 */
+:root {
+  --part-legs: #e0b500;
+  --part-chest: #2ec3d9;
+  --part-back: #f56c00;
+  --part-shoulders: #b678e6;
+  --part-core: #57c93f;
+  --part-arms: #f26584;
+  --part-cardio: #4f8cff;
+  --part-recovery: #38b18a;
+  --part-other: #8a90a5;
 }
 
-.body-part-row {
+:root[data-theme="light"] {
+  --part-legs: #a88800;
+  --part-chest: #0f93a8;
+  --part-back: #d45800;
+  --part-shoulders: #8e4ec6;
+  --part-core: #2e9c1c;
+  --part-arms: #d6446b;
+  --part-cardio: #2f6fe0;
+  --part-recovery: #1f8a67;
+  --part-other: #6c7284;
+}
+
+.body-part-chart-wrap {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 20px;
+  flex-wrap: wrap;
 }
 
-.body-part-name {
-  width: 56px;
+.body-part-donut {
+  width: 160px;
   flex-shrink: 0;
+  margin: 0 auto;
+}
+
+.donut-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.donut-arc {
+  transition: opacity 0.2s;
+  cursor: default;
+}
+
+.donut-svg:hover .donut-arc {
+  opacity: 0.45;
+}
+
+.donut-svg .donut-arc:hover {
+  opacity: 1;
+}
+
+.donut-center-value {
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 800;
+  fill: var(--text-color);
+}
+
+.donut-center-label {
+  font-size: 11px;
+  fill: var(--text-muted);
+}
+
+.body-part-legend {
+  flex: 1;
+  min-width: 150px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.body-part-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.legend-name {
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-width: 56px;
+}
+
+.legend-value {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-left: auto;
+}
+
+/* 恢复进度 */
+.recovery-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.recovery-ai-summary {
+  position: relative;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: rgba(0, 240, 255, 0.06);
+  border: 1px solid rgba(0, 240, 255, 0.18);
+  border-radius: 14px;
+  padding: 12px 34px 12px 14px;
+}
+
+.recovery-summary-icon {
+  margin-right: 6px;
+}
+
+.recovery-clear-ai {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 6px;
+}
+
+.recovery-clear-ai:hover {
+  color: var(--danger-color);
+}
+
+.recovery-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.recovery-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recovery-row-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.recovery-part-name {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.body-part-bar-track {
-  flex: 1;
+.recovery-ai-badge {
+  font-style: normal;
+  font-size: 9px;
+  font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: rgba(0, 240, 255, 0.15);
+  color: var(--neon-blue);
+  border: 1px solid rgba(0, 240, 255, 0.3);
+}
+
+.recovery-status-chip {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 8px;
+}
+
+.recovery-status-chip.recovery-ok {
+  color: #2e9c1c;
+  background: rgba(87, 201, 63, 0.14);
+}
+
+.recovery-status-chip.recovery-mid {
+  color: #c99700;
+  background: rgba(224, 181, 0, 0.14);
+}
+
+.recovery-status-chip.recovery-low {
+  color: var(--danger-color);
+  background: rgba(255, 59, 48, 0.12);
+}
+
+:root:not([data-theme="light"]) .recovery-status-chip.recovery-ok { color: #6fe74f; }
+:root:not([data-theme="light"]) .recovery-status-chip.recovery-mid { color: #ffd000; }
+:root:not([data-theme="light"]) .recovery-status-chip.recovery-low { color: #ff6b61; }
+
+.recovery-bar-track {
   height: 8px;
   border-radius: 4px;
   background: rgba(var(--surface-rgb), 0.06);
   overflow: hidden;
 }
 
-.body-part-bar-fill {
+.recovery-bar-fill {
   height: 100%;
   border-radius: 4px;
-  background: linear-gradient(90deg, var(--chocozap-yellow), var(--chocozap-orange));
   transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.body-part-count {
-  width: 40px;
-  flex-shrink: 0;
-  text-align: right;
-  font-size: 12px;
+.recovery-bar-fill.recovery-ok {
+  background: linear-gradient(90deg, #57c93f, #38b18a);
+}
+
+.recovery-bar-fill.recovery-mid {
+  background: linear-gradient(90deg, var(--chocozap-yellow), var(--chocozap-orange));
+}
+
+.recovery-bar-fill.recovery-low {
+  background: linear-gradient(90deg, #ff453a, #ff7300);
+}
+
+.recovery-comment {
+  font-size: 11px;
   color: var(--text-muted);
+  font-style: italic;
 }
 
 /* PR 个人最佳纪录 */
@@ -2331,4 +2525,59 @@ input[type="date"].glass-input::-webkit-calendar-picker-indicator {
 .pr-toast.show {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
+}
+
+/* ==========================================================================
+   12. AI 教练：模式选择首页 (聊天 / 训练菜单 / 身体分析)
+   ========================================================================== */
+.ai-mode-home {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ai-mode-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 20px !important;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-color);
+  font-family: var(--font-body);
+  transition: all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.15);
+}
+
+.ai-mode-card:hover {
+  border: 1px solid rgba(255, 208, 0, 0.4);
+  transform: translateY(-2px);
+}
+
+.ai-mode-card:active {
+  transform: scale(0.98);
+}
+
+.ai-mode-icon {
+  font-size: 28px;
+}
+
+.ai-mode-title {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.ai-mode-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+@media (min-width: 769px) {
+  .ai-mode-home {
+    flex-direction: row;
+  }
+  .ai-mode-card {
+    flex: 1;
+  }
 }

@@ -1014,6 +1014,7 @@ function showPRToast(message) {
 // 切换到"趋势"页签时统一刷新三个子模块
 function renderTrendsTab() {
   renderCalendarHeatmap();
+  renderRecoveryStatus();
   renderBodyPartStats();
   renderPersonalRecords();
 }
@@ -1101,9 +1102,19 @@ function renderCalendarHeatmap() {
 }
 
 // ---- 身体部位统计 (近30天) ----
+// 每个身体部位的固定专属颜色 (CSS 变量名，深浅两套主题在 style.css 中各自定义并通过了配色校验)。
+// 颜色跟随部位实体固定绑定、按此顺序排列扇区，保证同一部位在任何时候颜色一致且相邻扇区色相错开
+const BODY_PART_ORDER = ['腿部', '胸部', '背部', '肩部', '核心', '手臂', '有氧', '放松恢复', '其他'];
+const BODY_PART_COLOR_VARS = {
+  '腿部': '--part-legs', '胸部': '--part-chest', '背部': '--part-back',
+  '肩部': '--part-shoulders', '核心': '--part-core', '手臂': '--part-arms',
+  '有氧': '--part-cardio', '放松恢复': '--part-recovery', '其他': '--part-other'
+};
+
 function renderBodyPartStats() {
-  const container = document.getElementById("body-part-list");
-  if (!container) return;
+  const donutContainer = document.getElementById("body-part-donut");
+  const legendContainer = document.getElementById("body-part-legend");
+  if (!donutContainer || !legendContainer) return;
 
   const today = new Date();
   const cutoff = new Date(today);
@@ -1117,27 +1128,201 @@ function renderBodyPartStats() {
     counts[part] = (counts[part] || 0) + 1;
   });
 
-  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  // 按固定顺序排列 (颜色跟随实体，不随数量排名变动)
+  const entries = BODY_PART_ORDER.filter(p => counts[p] > 0).map(p => [p, counts[p]]);
+  const total = entries.reduce((sum, [, c]) => sum + c, 0);
 
-  if (entries.length === 0) {
-    container.innerHTML = `<div class="empty-state"><div class="empty-emoji">🗒️</div><p>最近30天还没有打卡记录</p></div>`;
+  if (total === 0) {
+    donutContainer.innerHTML = "";
+    legendContainer.innerHTML = `<div class="empty-state"><div class="empty-emoji">🗒️</div><p>最近30天还没有打卡记录</p></div>`;
     return;
   }
 
-  const maxCount = Math.max(...entries.map(e => e[1]));
+  // ---- SVG 环形图 ----
+  const size = 160;
+  const cx = size / 2, cy = size / 2;
+  const radius = 62;
+  const strokeWidth = 26;
+  const circumference = 2 * Math.PI * radius;
+  // 扇区间隙固定 2px (换算成周长占比)；只有一个分类时不留缝，画整圆
+  const gapPx = entries.length > 1 ? 2 : 0;
 
-  container.innerHTML = entries.map(([part, count]) => {
-    const pct = Math.round((count / maxCount) * 100);
+  const polar = (angleDeg, r) => {
+    const rad = (angleDeg - 90) * Math.PI / 180; // -90° 让起点在12点钟方向
+    return [cx + r * Math.cos(rad), cy + r * Math.sin(rad)];
+  };
+
+  const gapDeg = (gapPx / circumference) * 360;
+  let angleCursor = 0;
+  let arcsHtml = "";
+
+  entries.forEach(([part, count]) => {
+    const sweep = (count / total) * 360;
+    const startAngle = angleCursor + gapDeg / 2;
+    const endAngle = angleCursor + sweep - gapDeg / 2;
+    angleCursor += sweep;
+    if (endAngle <= startAngle) return; // 极小扇区被间隙吃掉时跳过 (数量为0不会出现，防御处理)
+
+    const colorVar = BODY_PART_COLOR_VARS[part] || '--part-other';
+    const pct = Math.round((count / total) * 100);
+
+    if (entries.length === 1) {
+      // 只有一个分类：画完整圆环 (arc 路径无法表达 360°)
+      arcsHtml = `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="none" stroke="var(${colorVar})" stroke-width="${strokeWidth}" class="donut-arc"><title>${part}：${count}次 (100%)</title></circle>`;
+      return;
+    }
+
+    const [x1, y1] = polar(startAngle, radius);
+    const [x2, y2] = polar(endAngle, radius);
+    const largeArc = (endAngle - startAngle) > 180 ? 1 : 0;
+    arcsHtml += `<path d="M ${x1.toFixed(2)} ${y1.toFixed(2)} A ${radius} ${radius} 0 ${largeArc} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}"
+      fill="none" stroke="var(${colorVar})" stroke-width="${strokeWidth}" stroke-linecap="butt" class="donut-arc">
+      <title>${part}：${count}次 (${pct}%)</title></path>`;
+  });
+
+  donutContainer.innerHTML = `
+    <svg viewBox="0 0 ${size} ${size}" class="donut-svg" role="img" aria-label="近30天身体部位训练分布">
+      ${arcsHtml}
+      <text x="${cx}" y="${cy - 4}" text-anchor="middle" class="donut-center-value">${total}</text>
+      <text x="${cx}" y="${cy + 16}" text-anchor="middle" class="donut-center-label">次训练</text>
+    </svg>
+  `;
+
+  // ---- 图例：色点 + 名称 + 次数(%)，文字用文本色而非系列色 ----
+  legendContainer.innerHTML = entries.map(([part, count]) => {
+    const pct = Math.round((count / total) * 100);
+    const colorVar = BODY_PART_COLOR_VARS[part] || '--part-other';
     return `
-      <div class="body-part-row">
-        <span class="body-part-name">${part}</span>
-        <div class="body-part-bar-track">
-          <div class="body-part-bar-fill" style="width:${pct}%"></div>
-        </div>
-        <span class="body-part-count">${count}次</span>
+      <div class="body-part-legend-item">
+        <i class="legend-dot" style="background: var(${colorVar})"></i>
+        <span class="legend-name">${part}</span>
+        <span class="legend-value">${count}次 (${pct}%)</span>
       </div>
     `;
   }).join('');
+}
+
+// ---- 恢复进度 (Recovery) ----
+// 每个部位练到力竭后大致的完全恢复时长（小时）。参考普遍的训练恢复窗口：
+// 大肌群(腿/胸/背) 48-72h，小肌群(肩/臂) 约48h，核心恢复快，有氧系统次日即可恢复
+const RECOVERY_HOURS = {
+  '腿部': 72, '胸部': 60, '背部': 60, '肩部': 48, '手臂': 48, '核心': 36, '有氧': 24
+};
+
+// 单次训练的疲劳系数：组数越多越接近力竭。打卡记录只有日期没有时刻，
+// 统一按当天中午12点计算经过时长，保证同一天内多次查看结果一致（确定性）
+function workoutFatigueFactor(w) {
+  const d = w.details || {};
+  if (CARDIO_TYPES.includes(w.type)) {
+    const t = d.time || 0;
+    return t >= 30 ? 1.0 : t >= 15 ? 0.8 : 0.6;
+  }
+  const sets = d.sets || 0;
+  return sets >= 3 ? 1.0 : sets === 2 ? 0.85 : 0.6;
+}
+
+// 计算所有部位当前的恢复百分比 (0-100，算法确定性输出)
+function computeRecoveryStatus() {
+  const now = new Date();
+  const results = {};
+
+  Object.keys(RECOVERY_HOURS).forEach(part => { results[part] = 100; });
+
+  // 只看最近7天的记录，更早的必然已完全恢复
+  const cutoff = new Date(now);
+  cutoff.setDate(cutoff.getDate() - 7);
+  const cutoffStr = getLocalDateString(cutoff);
+
+  state.workouts.forEach(w => {
+    if (w.date < cutoffStr) return;
+    const part = BODY_PART_MAP[w.type];
+    if (!RECOVERY_HOURS[part]) return; // 放松恢复/其他不产生疲劳
+
+    const workoutTime = parseLocalDate(w.date);
+    workoutTime.setHours(12, 0, 0, 0);
+    const elapsedHours = Math.max(0, (now - workoutTime) / 3600000);
+    const recoveryHours = RECOVERY_HOURS[part];
+
+    // 残余疲劳 = 疲劳系数 × (1 - 已恢复比例)，多次训练叠加
+    const residual = workoutFatigueFactor(w) * Math.max(0, 1 - elapsedHours / recoveryHours);
+    results[part] = Math.max(0, results[part] - Math.round(residual * 100));
+  });
+
+  return results;
+}
+
+function recoveryStatusLabel(pct) {
+  if (pct >= 80) return { text: '已恢复', cls: 'recovery-ok' };
+  if (pct >= 40) return { text: '恢复中', cls: 'recovery-mid' };
+  return { text: '疲劳', cls: 'recovery-low' };
+}
+
+function renderRecoveryStatus() {
+  const container = document.getElementById("recovery-list");
+  const sourceLabel = document.getElementById("recovery-source-label");
+  const aiSummaryBox = document.getElementById("recovery-ai-summary");
+  if (!container) return;
+
+  const algoValues = computeRecoveryStatus();
+
+  // AI 身体分析推送的数据 (若有)，按部位覆盖算法值并附点评
+  let aiData = null;
+  try {
+    aiData = JSON.parse(localStorage.getItem("chocozap_recovery_ai") || "null");
+  } catch (e) { aiData = null; }
+  const aiParts = {};
+  if (aiData && Array.isArray(aiData.parts)) {
+    aiData.parts.forEach(p => {
+      if (RECOVERY_HOURS[p.part] !== undefined && typeof p.recovery === 'number') {
+        aiParts[p.part] = { recovery: Math.max(0, Math.min(100, Math.round(p.recovery))), comment: typeof p.comment === 'string' ? p.comment : '' };
+      }
+    });
+  }
+  const hasAi = Object.keys(aiParts).length > 0;
+
+  if (sourceLabel) {
+    if (hasAi && aiData.updatedAt) {
+      const d = new Date(aiData.updatedAt);
+      sourceLabel.textContent = `Gemini 分析 · ${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    } else {
+      sourceLabel.textContent = "按训练量与间隔实时估算";
+    }
+  }
+
+  if (aiSummaryBox) {
+    if (hasAi && aiData.summary) {
+      aiSummaryBox.style.display = "block";
+      aiSummaryBox.innerHTML = `<span class="recovery-summary-icon">🩺</span>${aiData.summary}
+        <button class="recovery-clear-ai" onclick="clearAiRecoveryAnalysis()" title="清除AI分析，恢复算法估算">✕</button>`;
+    } else {
+      aiSummaryBox.style.display = "none";
+      aiSummaryBox.innerHTML = "";
+    }
+  }
+
+  container.innerHTML = Object.keys(RECOVERY_HOURS).map(part => {
+    const ai = aiParts[part];
+    const pct = ai ? ai.recovery : algoValues[part];
+    const status = recoveryStatusLabel(pct);
+    return `
+      <div class="recovery-row">
+        <div class="recovery-row-top">
+          <span class="recovery-part-name">${part}${ai ? '<i class="recovery-ai-badge">AI</i>' : ''}</span>
+          <span class="recovery-status-chip ${status.cls}">${status.text} ${pct}%</span>
+        </div>
+        <div class="recovery-bar-track">
+          <div class="recovery-bar-fill ${status.cls}" style="width:${pct}%"></div>
+        </div>
+        ${ai && ai.comment ? `<div class="recovery-comment">${ai.comment}</div>` : ''}
+      </div>
+    `;
+  }).join('');
+}
+
+// 清除 AI 分析结果，恢复到纯算法估算
+function clearAiRecoveryAnalysis() {
+  localStorage.removeItem("chocozap_recovery_ai");
+  renderRecoveryStatus();
 }
 
 // ---- PR 个人最佳纪录列表 ----
@@ -1531,6 +1716,72 @@ function extractAiPlanFromReply(text) {
     items = [];
   }
   return { cleanedText, items };
+}
+
+// 身体分析模式的结构化输出指令。稳定性设计三管齐下：
+// 1. temperature 0 (调用处设置)
+// 2. 把 App 自己算出的恢复估算值作为"锚点"提供给 AI，只允许小幅修正而不是从零发挥
+// 3. 数值强制取整为 5 的倍数、点评限制字数，压缩自由发挥空间
+function buildRecoveryAnalysisInstruction() {
+  const algoValues = computeRecoveryStatus();
+  const algoStr = Object.keys(algoValues).map(part => `  - ${part}: ${algoValues[part]}%`).join('\n');
+  const partsListStr = Object.keys(RECOVERY_HOURS).join('、');
+
+  return `
+【身体部位恢复分析输出格式 —— 本次请求需要输出结构化的恢复分析数据，必须输出】
+App 已按训练量和间隔时间算出了各部位当前的恢复度估算值（100% = 完全恢复）：
+${algoStr}
+请以这些估算值为基准进行分析。你只在有明确依据时（比如用户备注了酸痛、某部位连续多日高强度训练、训练量异常）
+对个别部位做 ±15% 以内的修正，其余部位直接沿用估算值。所有恢复度数值必须是 5 的整数倍。
+非常重要：你的输出必须是确定性的——同样的输入数据必须给出完全相同的数值和点评，不要引入任何随机变化。
+
+请在你正常的、给人看的回复内容结束之后，另起一行，追加一个由 <!--CHOCOZAP_RECOVERY_START--> 和 <!--CHOCOZAP_RECOVERY_END--> 包裹的 JSON 对象，格式为：
+{ "summary": "不超过50字的总体训练建议", "parts": [ { "part": "部位名", "recovery": 数值0-100, "comment": "不超过30字的该部位点评" }, ... ] }
+part 必须是以下名称之一（每个部位最多出现一次）：${partsListStr}
+这段 JSON 是给 App 自动解析用的，不要用 Markdown 代码块包裹，直接是纯 JSON 文本，且这次务必要输出。`;
+}
+
+// 从 AI 回复文本中提取结构化恢复分析块，返回清理后的正文 + 校验过的恢复数据 (无效时为 null)
+function extractAiRecoveryFromReply(text) {
+  const match = text.match(/<!--CHOCOZAP_RECOVERY_START-->([\s\S]*?)<!--CHOCOZAP_RECOVERY_END-->/);
+  if (!match) return { cleanedText: text, recovery: null };
+
+  const cleanedText = (text.slice(0, match.index) + text.slice(match.index + match[0].length)).trim();
+  let recovery = null;
+  try {
+    const parsed = JSON.parse(match[1].trim());
+    if (parsed && typeof parsed === 'object' && Array.isArray(parsed.parts)) {
+      const validParts = parsed.parts
+        .filter(p => p && RECOVERY_HOURS[p.part] !== undefined && typeof p.recovery === 'number')
+        .map(p => ({
+          part: p.part,
+          recovery: Math.max(0, Math.min(100, Math.round(p.recovery / 5) * 5)),
+          comment: typeof p.comment === 'string' ? p.comment.slice(0, 60) : ''
+        }));
+      // 同一部位出现多次时保留第一次
+      const seen = new Set();
+      const dedupedParts = validParts.filter(p => !seen.has(p.part) && seen.add(p.part));
+      if (dedupedParts.length > 0) {
+        recovery = {
+          summary: typeof parsed.summary === 'string' ? parsed.summary.slice(0, 100) : '',
+          parts: dedupedParts
+        };
+      }
+    }
+  } catch (e) {
+    recovery = null;
+  }
+  return { cleanedText, recovery };
+}
+
+// 保存 AI 恢复分析结果并刷新趋势板块的恢复进度模块
+function applyAiRecoveryAnalysis(recovery) {
+  localStorage.setItem("chocozap_recovery_ai", JSON.stringify({
+    updatedAt: Date.now(),
+    summary: recovery.summary,
+    parts: recovery.parts
+  }));
+  renderRecoveryStatus();
 }
 
 // 把 AI 给出的原始计划条目校验/归一化后加入推荐列表并持久化
@@ -1991,14 +2242,106 @@ function copyPromptText() {
 
 // ==========================================================================
 // 7.2 AI 多会话聊天记录 (Chat Sessions，仿主流 AI 聊天 App 的历史对话)
+//     三种聊天模式：聊天(chat) / 训练菜单(menu) / 身体分析(analysis)
 // ==========================================================================
-// 注意：这段文字会经过 formatChatMessageText 处理 (先转义 HTML 再解析 **粗体**/换行)，
-// 所以这里只能写 Markdown 语法，不能直接写 <strong>/<br> 这类 HTML 标签，否则会被转义显示成字面文字
-const CHAT_WELCOME_TEXT = `你好！我是你的 AI 健身教练。我会根据你录入的 ChocoZAP 健身记录来分析你的运动成效、建议合理的负荷与恢复周期，还可以为你定制饮食与锻炼计划。
+// 注意：欢迎语会经过 formatChatMessageText 处理 (先转义 HTML 再解析 **粗体**/换行)，
+// 所以只能写 Markdown 语法，不能直接写 <strong>/<br> 这类 HTML 标签，否则会被转义显示成字面文字
+const AI_MODES = {
+  chat: {
+    label: '💬 聊天',
+    placeholder: "输入你想问的问题，如：'分析我最近的腿举重量是否有进步？'",
+    quickAction: '打包健身数据',
+    welcome: `你好！我是你的 AI 健身教练。这里是**自由聊天模式**，你可以随便问我训练、饮食、恢复相关的问题，我会结合你的打卡历史来回答。
 
-**💡 使用方式：**
-1. **API 直连对话**：在"设置"中配置 Gemini API Key，即可直接在下方输入框和我对话！
-2. **免 API 一键打包**：点击下方的"打包健身数据"，我将生成一份带有你所有打卡细节的 Prompt 模板，你只需复制它即可粘贴至任何 AI 网页端进行分析。`;
+**💡 提示：**
+1. 需要 AI 定制可一键打卡的训练菜单？返回上一级选择「训练菜单」模式
+2. 想了解各部位的疲劳与恢复状况？选择「身体分析」模式
+3. 没有配置 API Key 也可以点击下方「打包健身数据」，复制 Prompt 粘贴到任意 AI 网页端使用`
+  },
+  menu: {
+    label: '📋 训练菜单',
+    placeholder: "描述你的需求，如：'今天想练腿和核心，时间只有40分钟'",
+    quickAction: '一键生成今日菜单',
+    welcome: `这里是**训练菜单模式**。直接告诉我你今天的目标、状态或时间限制，我会给出一份具体可执行的训练菜单，并自动推送到主页的「Gemini的推荐」模块，可以一键打卡。
+
+也可以点击下方「一键生成今日菜单」，我会根据你的训练历史和恢复状况直接安排。
+
+注意：新生成的菜单会替换掉主页上还没处理完的旧推荐。`
+  },
+  analysis: {
+    label: '🩺 身体分析',
+    placeholder: "可以直接提问，如：'我这周练得均衡吗？明天适合练什么？'",
+    quickAction: '一键分析恢复状况',
+    welcome: `这里是**身体分析模式**。我会基于你近期的打卡数据，分析各身体部位的训练量分布与疲劳恢复状况。
+
+点击下方「一键分析恢复状况」，分析结果会自动推送到「趋势」板块的恢复进度模块（覆盖算法估算值，并附上我的点评）。`
+  }
+};
+
+// 当前所处的聊天模式；null = 显示模式选择首页
+let currentAiMode = null;
+
+function getSessionMode(session) {
+  return session.mode || 'chat'; // 旧版会话没有 mode 字段，一律视为普通聊天
+}
+
+// 进入某个聊天模式：恢复该模式最近的会话（没有则新建），并切换 UI
+function enterAiMode(mode) {
+  if (!AI_MODES[mode]) return;
+  currentAiMode = mode;
+
+  // 延续上次的对话：优先保留当前激活的会话（用户可能刷新前刚手动切换过去），
+  // 其次取该模式下最近更新的会话，都没有才新建
+  const activeSession = state.chatSessions.find(s => s.id === state.activeChatSessionId);
+  const sessionsOfMode = state.chatSessions.filter(s => getSessionMode(s) === mode);
+  if (activeSession && getSessionMode(activeSession) === mode) {
+    // 当前激活的会话就属于这个模式，直接沿用
+  } else if (sessionsOfMode.length > 0) {
+    sessionsOfMode.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    state.activeChatSessionId = sessionsOfMode[0].id;
+  } else {
+    const session = { id: "chat-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6), mode: mode, messages: [], updatedAt: Date.now() };
+    state.chatSessions.unshift(session);
+    state.activeChatSessionId = session.id;
+  }
+  persistChatSessions();
+
+  document.getElementById("ai-mode-home").style.display = "none";
+  document.getElementById("ai-chat-wrapper").style.display = "flex";
+  syncAiModeUI();
+  renderChatSessionMessages();
+  renderChatHistoryList();
+}
+
+// 返回模式选择首页
+function exitAiMode() {
+  currentAiMode = null;
+  closeChatHistoryPanel();
+  document.getElementById("ai-chat-wrapper").style.display = "none";
+  document.getElementById("ai-mode-home").style.display = "flex";
+}
+
+// 同步模式徽标 / 输入框占位文字 / 快捷按钮文案
+function syncAiModeUI() {
+  const conf = AI_MODES[currentAiMode] || AI_MODES.chat;
+  const badge = document.getElementById("ai-mode-badge");
+  if (badge) badge.textContent = conf.label;
+  const input = document.getElementById("chat-input");
+  if (input) input.placeholder = conf.placeholder;
+  const quickBtn = document.getElementById("ai-quick-action");
+  if (quickBtn) quickBtn.textContent = conf.quickAction;
+}
+
+// 快捷按钮：按当前模式分发
+function runAiQuickAction() {
+  if (currentAiMode === 'menu') {
+    requestTrainingPlan();
+  } else if (currentAiMode === 'analysis') {
+    requestBodyAnalysis();
+  } else {
+    packageWorkoutDataPrompt();
+  }
+}
 
 function persistChatSessions() {
   localStorage.setItem("chocozap_chat_sessions", JSON.stringify(state.chatSessions));
@@ -2009,7 +2352,7 @@ function persistChatSessions() {
 function getActiveChatSession() {
   let session = state.chatSessions.find(s => s.id === state.activeChatSessionId);
   if (!session) {
-    session = { id: "chat-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6), messages: [], updatedAt: Date.now() };
+    session = { id: "chat-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6), mode: currentAiMode || 'chat', messages: [], updatedAt: Date.now() };
     state.chatSessions.unshift(session);
     state.activeChatSessionId = session.id;
     persistChatSessions();
@@ -2026,7 +2369,7 @@ function getSessionTitle(session) {
 }
 
 function startNewChatSession() {
-  const session = { id: "chat-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6), messages: [], updatedAt: Date.now() };
+  const session = { id: "chat-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6), mode: currentAiMode || 'chat', messages: [], updatedAt: Date.now() };
   state.chatSessions.unshift(session);
   state.activeChatSessionId = session.id;
   persistChatSessions();
@@ -2037,7 +2380,13 @@ function startNewChatSession() {
 
 function switchChatSession(id) {
   if (state.activeChatSessionId === id) { closeChatHistoryPanel(); return; }
+  const target = state.chatSessions.find(s => s.id === id);
+  if (!target) return;
+
   state.activeChatSessionId = id;
+  // 历史会话可能属于别的模式，跟随会话切换模式，保证上下文和系统指令匹配
+  currentAiMode = getSessionMode(target);
+  syncAiModeUI();
   persistChatSessions();
   renderChatSessionMessages();
   renderChatHistoryList();
@@ -2080,13 +2429,14 @@ function renderChatHistoryList() {
   }
 
   const sorted = [...state.chatSessions].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  const modeBadges = { chat: '💬', menu: '📋', analysis: '🩺' };
   list.innerHTML = sorted.map(session => {
     const isActive = session.id === state.activeChatSessionId;
     const lastMsg = session.messages[session.messages.length - 1];
     const timeStr = lastMsg ? new Date(lastMsg.time || session.updatedAt).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }) : '';
     return `
       <div class="chat-history-item ${isActive ? 'active' : ''}" onclick="switchChatSession('${session.id}')">
-        <div class="chat-history-item-title">${getSessionTitle(session)}</div>
+        <div class="chat-history-item-title">${modeBadges[getSessionMode(session)] || '💬'} ${getSessionTitle(session)}</div>
         <div class="chat-history-item-meta">
           <span>${timeStr}</span>
           <button class="chat-history-delete-btn" onclick="deleteChatSession('${session.id}', event)" title="删除">🗑</button>
@@ -2104,7 +2454,8 @@ function renderChatSessionMessages() {
 
   const session = state.chatSessions.find(s => s.id === state.activeChatSessionId);
   if (!session || session.messages.length === 0) {
-    appendMessage("ai", "Gemini Coach", CHAT_WELCOME_TEXT, false, false);
+    const conf = AI_MODES[currentAiMode || (session ? getSessionMode(session) : 'chat')] || AI_MODES.chat;
+    appendMessage("ai", "Gemini Coach", conf.welcome, false, false);
     return;
   }
   session.messages.forEach(m => {
@@ -2112,19 +2463,17 @@ function renderChatSessionMessages() {
   });
 }
 
-// 模式 A: API 直连对话 —— 普通聊天，不附带"结构化训练计划"输出指令，
-// 所以 AI 不会在闲聊/答疑时擅自甩出一份训练菜单
+// 发送按钮：按当前所处的模式对话 (聊天=纯对话，菜单=可生成推荐，分析=可推送恢复数据)
 async function sendChatMessage() {
   const chatInput = document.getElementById("chat-input");
   const userText = chatInput.value.trim();
   if (!userText) return;
   chatInput.value = "";
 
-  await callGeminiCoach(userText, { wantPlan: false });
+  await callGeminiCoach(userText, { mode: currentAiMode || 'chat' });
 }
 
-// 点击"生成训练菜单"按钮：唯一会真正要求 AI 输出结构化训练计划的入口，
-// 用户不点这个按钮，AI 就不会主动给出可以一键打卡的推荐菜单
+// "一键生成今日菜单"：训练菜单模式的快捷入口
 async function requestTrainingPlan() {
   if (!state.settings.apiKey) {
     alert('生成训练菜单需要先在"设置"页配置 Gemini API Key（免 Key 的"打包健身数据"模式无法自动生成推荐列表，只能手动复制文字）。');
@@ -2133,11 +2482,23 @@ async function requestTrainingPlan() {
   }
 
   const userText = "请帮我安排一份今天可以在 ChocoZAP 完成的具体训练菜单，包含项目、重量、组数等可执行的强度安排。";
-  await callGeminiCoach(userText, { wantPlan: true });
+  await callGeminiCoach(userText, { mode: 'menu' });
 }
 
-// 两个入口共用的请求逻辑：发消息、带上下文调用 Gemini、渲染回复、（可选）解析结构化计划
-async function callGeminiCoach(userText, { wantPlan }) {
+// "一键分析恢复状况"：身体分析模式的快捷入口
+async function requestBodyAnalysis() {
+  if (!state.settings.apiKey) {
+    alert('身体分析需要先在"设置"页配置 Gemini API Key。');
+    switchTab('settings');
+    return;
+  }
+
+  const userText = "请基于我的打卡数据，分析各身体部位的训练量分布和当前的疲劳恢复状况，并把结构化结果推送给 App。";
+  await callGeminiCoach(userText, { mode: 'analysis' });
+}
+
+// 三种模式共用的请求逻辑：发消息、带上下文调用 Gemini、渲染回复、按模式解析结构化数据
+async function callGeminiCoach(userText, { mode }) {
   const apiKey = state.settings.apiKey;
   const model = state.settings.apiModel || 'gemini-2.5-flash';
   const session = getActiveChatSession();
@@ -2145,30 +2506,34 @@ async function callGeminiCoach(userText, { wantPlan }) {
   // 1. 将用户的提问呈现在 UI 聊天框中，并计入当前会话历史
   appendMessage("user", "你", userText);
 
-  // 2. 检测 API Key 是否配置 (走到这里说明是普通聊天；生成菜单按钮已经在 requestTrainingPlan 里提前拦截过)
+  // 2. 检测 API Key 是否配置 (菜单/分析的快捷按钮已提前拦截；这里兜底处理手动输入的情况)
   if (!apiKey) {
     setTimeout(() => {
       appendMessage("ai", "Gemini Coach", `未检测到您的 API Key。
 
-我已经将您的最近健身打卡数据与刚才的提问打包。请点击输入框上方的“**打包健身数据**”按钮直接复制，在网页端 Gemini/ChatGPT 提问即可！
+我已经将您的最近健身打卡数据与刚才的提问打包。请切换到「聊天」模式点击“**打包健身数据**”按钮直接复制，在网页端 Gemini/ChatGPT 提问即可！
 当然，如果您希望在应用内获得直连的丝滑对话，可以在“设置”页面中输入您的 Gemini API Key。`);
     }, 600);
     return;
   }
 
-  // 3. 系统指令：健身数据背景 + 器材白名单约束，仅在明确请求菜单时才附加结构化输出格式指令
+  // 3. 系统指令：健身数据背景 + 器材白名单是所有模式的公共底座；
+  //    菜单模式追加结构化训练计划输出格式，分析模式追加恢复分析输出格式
   let systemPromptText = generateWorkoutSummaryPrompt();
-  if (wantPlan) systemPromptText += "\n" + buildStructuredPlanInstruction();
+  if (mode === 'menu') systemPromptText += "\n" + buildStructuredPlanInstruction();
+  if (mode === 'analysis') systemPromptText += "\n" + buildRecoveryAnalysisInstruction();
 
   // 4. 把当前会话的历史消息转换为 Gemini 多轮对话格式，实现真正的"继续聊下去"
-  //    (而不是每次都把整段历史重新塞进单条 user 消息里)
   const conversationTurns = session.messages.map(m => ({
     role: m.role === 'user' ? 'user' : 'model',
     parts: [{ text: m.text }]
   }));
 
   // 5. 显示 AI 正在思考 (Typing...)
-  const tempBubbleId = appendMessage("ai", "Gemini Coach", wantPlan ? "正在为你安排今日训练菜单，请稍候..." : "正在思考中，请稍候...", true);
+  const pendingText = mode === 'menu' ? "正在为你安排训练菜单，请稍候..."
+    : mode === 'analysis' ? "正在分析你的训练分布与恢复状况，请稍候..."
+    : "正在思考中，请稍候...";
+  const tempBubbleId = appendMessage("ai", "Gemini Coach", pendingText, true);
 
   try {
     // Google Gemini API Beta 直连请求
@@ -2182,9 +2547,10 @@ async function callGeminiCoach(userText, { wantPlan }) {
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: systemPromptText }] },
         contents: conversationTurns,
-        // 移除 maxOutputTokens 限制，让模型自主完整回答
+        // 分析模式用 temperature 0：相同的输入数据必须给出尽可能一致的输出，
+        // 防止"样本不变、结果一次一个样"
         generationConfig: {
-          temperature: 0.7
+          temperature: mode === 'analysis' ? 0 : 0.7
         }
       })
     });
@@ -2197,19 +2563,32 @@ async function callGeminiCoach(userText, { wantPlan }) {
     if (response.ok && data.candidates && data.candidates[0].content && data.candidates[0].content.parts) {
       // 无损拼接所有 parts 的 text，防止多 part 返回时导致的话语中途截断
       const rawReplyText = data.candidates[0].content.parts.map(part => part.text || "").join("");
+      let displayText = rawReplyText;
 
-      // 提取结构化训练计划 (只有 wantPlan 时才会真的有这段内容)，正文里不展示这段 JSON
-      const { cleanedText, items } = extractAiPlanFromReply(rawReplyText);
-      let displayText = cleanedText;
-      if (wantPlan && items.length > 0) {
-        // 新一轮菜单会替换掉之前还没处理的旧推荐，而不是无限堆积
-        setAiRecommendations(items);
-        // 立即静默同步到云端，避免"电脑上刚生成的菜单，手机上还没看到"
-        if (state.settings.githubToken) syncWithGithub(true);
-        displayText += `\n\n✅ 已为你生成 ${items.length} 条训练推荐，可以在首页「Gemini的推荐」模块查看，点击完成会自动生成今天的打卡记录。`;
-      } else if (wantPlan) {
-        displayText += `\n\n⚠️ 这次没能解析出结构化菜单，可以再点一次"生成训练菜单"重试。`;
+      if (mode === 'menu') {
+        // 提取结构化训练计划，正文里不展示这段 JSON
+        const { cleanedText, items } = extractAiPlanFromReply(rawReplyText);
+        displayText = cleanedText;
+        if (items.length > 0) {
+          // 新一轮菜单会替换掉之前还没处理的旧推荐，而不是无限堆积
+          setAiRecommendations(items);
+          // 立即静默同步到云端，避免"电脑上刚生成的菜单，手机上还没看到"
+          if (state.settings.githubToken) syncWithGithub(true);
+          displayText += `\n\n✅ 已为你生成 ${items.length} 条训练推荐，可以在首页「Gemini的推荐」模块查看，点击完成会自动生成今天的打卡记录。`;
+        }
+      } else if (mode === 'analysis') {
+        // 提取结构化恢复分析，推送到趋势板块
+        const { cleanedText, recovery } = extractAiRecoveryFromReply(rawReplyText);
+        displayText = cleanedText;
+        if (recovery) {
+          applyAiRecoveryAnalysis(recovery);
+          displayText += `\n\n✅ 分析结果已推送到「趋势」板块的恢复进度模块。`;
+        }
+      } else {
+        // 聊天模式防御性清理：即使 AI 违反指令输出了结构块，也只清理展示、不落地数据
+        displayText = extractAiPlanFromReply(rawReplyText).cleanedText;
       }
+
       appendMessage("ai", "Gemini Coach", displayText);
     } else {
       // 捕获 API 内部错误

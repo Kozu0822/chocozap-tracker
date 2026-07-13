@@ -17,7 +17,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Noto+Sans+SC:wght@300;400;500;700;900&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=1.3.0">
+  <link rel="stylesheet" href="style.css?v=1.4.0">
 </head>
 <body>
   <!-- 动态流体液体背景 -->
@@ -578,14 +578,33 @@
           </div>
         </div>
 
+        <!-- 恢复进度 -->
+        <div class="glass recovery-card">
+          <div class="chart-header">
+            <h3>恢复进度</h3>
+            <span class="chart-subtitle" id="recovery-source-label">按训练量与间隔实时估算</span>
+          </div>
+          <div class="recovery-ai-summary" id="recovery-ai-summary" style="display: none;">
+            <!-- AI 分析总结（由身体分析模式推送后显示） -->
+          </div>
+          <div class="recovery-list" id="recovery-list">
+            <!-- 由 JS 渲染 -->
+          </div>
+        </div>
+
         <!-- 身体部位统计 -->
         <div class="glass body-part-card">
           <div class="chart-header">
             <h3>身体部位统计</h3>
             <span class="chart-subtitle">近30天训练分布</span>
           </div>
-          <div class="body-part-list" id="body-part-list">
-            <!-- 由 JS 渲染 -->
+          <div class="body-part-chart-wrap">
+            <div class="body-part-donut" id="body-part-donut">
+              <!-- 由 JS 渲染 SVG 环形图 -->
+            </div>
+            <div class="body-part-legend" id="body-part-legend">
+              <!-- 由 JS 渲染图例 -->
+            </div>
           </div>
         </div>
 
@@ -608,9 +627,32 @@
           <p>结合你的打卡数据，让 Gemini 给你针对性的健身建议</p>
         </div>
 
-        <!-- AI 对话框 -->
-        <div class="glass ai-chat-container">
+        <!-- 模式选择首页 (未选择模式时显示) -->
+        <div class="ai-mode-home" id="ai-mode-home">
+          <button class="glass ai-mode-card" onclick="enterAiMode('chat')">
+            <span class="ai-mode-icon">💬</span>
+            <span class="ai-mode-title">聊天</span>
+            <span class="ai-mode-desc">自由提问、闲聊、答疑，AI 会结合你的打卡历史给建议</span>
+          </button>
+          <button class="glass ai-mode-card" onclick="enterAiMode('menu')">
+            <span class="ai-mode-icon">📋</span>
+            <span class="ai-mode-title">训练菜单</span>
+            <span class="ai-mode-desc">对话式定制训练菜单，生成后推送到主页一键打卡</span>
+          </button>
+          <button class="glass ai-mode-card" onclick="enterAiMode('analysis')">
+            <span class="ai-mode-icon">🩺</span>
+            <span class="ai-mode-title">身体分析</span>
+            <span class="ai-mode-desc">分析各部位训练量与恢复状况，结果推送到趋势板块</span>
+          </button>
+        </div>
+
+        <!-- AI 对话框 (选择模式后显示) -->
+        <div class="glass ai-chat-container" id="ai-chat-wrapper" style="display: none;">
           <div class="chat-toolbar">
+            <button class="chat-toolbar-btn" onclick="exitAiMode()" title="返回模式选择">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+              <span id="ai-mode-badge">聊天</span>
+            </button>
             <button class="chat-toolbar-btn" onclick="toggleChatHistoryPanel()" title="历史对话">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
               历史对话
@@ -627,15 +669,10 @@
 
           <!-- 输入区域 -->
           <div class="chat-input-area">
-            <textarea id="chat-input" placeholder="输入你想问的问题，如：'分析我最近的腿举重量是否有进步？'" class="glass-textarea" rows="2"></textarea>
+            <textarea id="chat-input" placeholder="输入你想问的问题" class="glass-textarea" rows="2"></textarea>
             <div class="chat-controls">
-              <button class="btn btn-secondary btn-sm" onclick="packageWorkoutDataPrompt()">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                打包健身数据
-              </button>
-              <button class="btn btn-secondary btn-sm" onclick="requestTrainingPlan()" title="让 AI 主动给出一份可以一键打卡的训练菜单">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
-                生成训练菜单
+              <button class="btn btn-secondary btn-sm" id="ai-quick-action" onclick="runAiQuickAction()">
+                快捷操作
               </button>
               <button class="btn btn-primary btn-sm btn-glowing-glow" id="btn-send-chat" onclick="sendChatMessage()">
                 发送
@@ -800,6 +837,6 @@
     <div class="pr-toast" id="pr-toast"></div>
   </div>
 
-  <script src="app.js?v=1.3.0"></script>
+  <script src="app.js?v=1.4.0"></script>
 </body>
 </html>
