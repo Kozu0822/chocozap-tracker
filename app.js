@@ -5,19 +5,64 @@
 // ==========================================================================
 let state = {
   workouts: [],
+  // 身体数据记录（体重/臂围/腰围/胸围）：[{ id, date, weight, arm, waist, chest }]
+  measurements: [],
   // 已删除记录的墓碑表 { workoutId: 删除时间戳 }，用于云同步时防止被删记录从云端"复活"
   deletedIds: {},
   settings: {
     weight: 70,
+    // AI 模型提供方：'claude'（默认，推理/结构化输出更强）或 'gemini'
+    apiProvider: 'claude',
     apiKey: '',
-    apiModel: 'gemini-2.5-flash'
+    // 各提供方各自保存一份 Key，切换时互不覆盖
+    apiKeys: {},
+    apiModel: 'claude-opus-4-8'
   },
   // AI 多会话聊天记录：[{ id, title, updatedAt, messages: [{role,name,text,time}] }]
   chatSessions: [],
   activeChatSessionId: null,
-  // AI 生成的训练推荐，展示在首页"Gemini的推荐"模块
+  // AI 生成的训练推荐，展示在首页"AI 教练推荐"模块
   aiRecommendations: []
 };
+
+// ==========================================================================
+// AI 模型提供方配置（Claude / Gemini），供设置页动态填充模型下拉、决定请求方式
+// ==========================================================================
+const AI_PROVIDERS = {
+  claude: {
+    label: 'Claude (Anthropic)',
+    coachName: 'Claude 教练',
+    keyLabel: 'Claude API Key',
+    keyPlaceholder: 'sk-ant-...',
+    defaultModel: 'claude-opus-4-8',
+    hint: '在 <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Anthropic 控制台</a> 申请 Claude API Key。',
+    models: [
+      { id: 'claude-opus-4-8', name: 'Claude Opus 4.8 (最强推理，推荐)' },
+      { id: 'claude-sonnet-5', name: 'Claude Sonnet 5 (速度与质量兼顾)' },
+      { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5 (最省，速度快)' }
+    ]
+  },
+  gemini: {
+    label: 'Gemini (Google)',
+    coachName: 'Gemini 教练',
+    keyLabel: 'Gemini API Key',
+    keyPlaceholder: 'AIzaSy...',
+    defaultModel: 'gemini-2.5-flash',
+    hint: '在 <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a> 免费申请 Gemini API Key。',
+    models: [
+      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (速度快)' },
+      { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro (推理能力强)' }
+    ]
+  }
+};
+
+function getAiProvider() {
+  return AI_PROVIDERS[state.settings.apiProvider] ? state.settings.apiProvider : 'claude';
+}
+
+function getAiCoachName() {
+  return AI_PROVIDERS[getAiProvider()].coachName;
+}
 
 // ChocoZAP 门店实际可用的器材清单，用于约束 AI 只推荐这些器材范围内的动作
 const EQUIPMENT_ROSTER = [
@@ -193,6 +238,13 @@ function loadData() {
     state.aiRecommendations = [];
   }
 
+  // 加载身体数据记录（体重/臂围/腰围/胸围）
+  try {
+    state.measurements = JSON.parse(localStorage.getItem("chocozap_measurements") || "[]") || [];
+  } catch (e) {
+    state.measurements = [];
+  }
+
   // 加载 AI 多会话聊天记录
   try {
     state.chatSessions = JSON.parse(localStorage.getItem("chocozap_chat_sessions") || "[]") || [];
@@ -209,8 +261,10 @@ function loadData() {
     state.workouts = initialMockWorkouts;
     state.settings = {
       weight: 70,
+      apiProvider: 'claude',
       apiKey: '',
-      apiModel: 'gemini-2.5-flash',
+      apiKeys: {},
+      apiModel: 'claude-opus-4-8',
       githubToken: '',
       githubGistId: ''
     };
@@ -226,19 +280,32 @@ function loadData() {
     } else {
       state.settings = {
         weight: 70,
+        apiProvider: 'claude',
         apiKey: '',
-        apiModel: 'gemini-2.5-flash',
+        apiKeys: {},
+        apiModel: 'claude-opus-4-8',
         githubToken: '',
         githubGistId: ''
       };
       localStorage.setItem("chocozap_settings", JSON.stringify(state.settings));
     }
   }
-  
+
+  // 兼容旧版本设置：老用户此前只有 Gemini，迁移为 gemini 提供方，保留其 Key 不丢失
+  if (!state.settings.apiProvider) {
+    const oldModel = state.settings.apiModel || '';
+    state.settings.apiProvider = oldModel.startsWith('gemini') ? 'gemini' : 'claude';
+  }
+  if (!state.settings.apiKeys || typeof state.settings.apiKeys !== 'object') {
+    state.settings.apiKeys = {};
+  }
+  // 把顶层 apiKey 归档到当前提供方的 apiKeys 里（首次迁移）
+  if (state.settings.apiKey && !state.settings.apiKeys[state.settings.apiProvider]) {
+    state.settings.apiKeys[state.settings.apiProvider] = state.settings.apiKey;
+  }
+
   // 将设置数据反映到 UI 控件中
-  document.getElementById("setting-weight").value = state.settings.weight;
-  document.getElementById("setting-api-key").value = state.settings.apiKey || "";
-  document.getElementById("setting-api-model").value = state.settings.apiModel || 'gemini-2.5-flash';
+  syncSettingsUI();
   document.getElementById("setting-github-token").value = state.settings.githubToken || "";
   document.getElementById("setting-github-gist-id").value = state.settings.githubGistId || "";
 
@@ -285,17 +352,36 @@ function getPastDateString(daysAgo) {
 // 2. 交互逻辑与事件绑定 (UI Interactions & Events)
 // ==========================================================================
 function setupEventListeners() {
-  // 运动项目选择器（Pill 选择）
-  const pills = document.querySelectorAll(".exercise-pill");
-  pills.forEach(pill => {
-    pill.addEventListener("click", () => {
-      pills.forEach(p => p.classList.remove("active"));
-      pill.classList.add("active");
-      
-      const type = pill.getAttribute("data-type");
-      setupFormForType(type);
-    });
-  });
+  // 打卡页项目卡片铺满界面，点击后进入对应参数界面（事件在渲染时以 onclick 绑定）
+  renderLogProjectGrid();
+}
+
+// 打卡页所有可选项目（力量 / 有氧 / 核心 / 放松 / 身体数据 / 自定义）
+const LOG_PROJECTS = [
+  { type: 'leg_press', icon: '🦵', name: '腿举', tag: '力量' },
+  { type: 'shoulder_press', icon: '💪', name: '肩推', tag: '力量' },
+  { type: 'chest_press', icon: '🏋️', name: '胸推', tag: '力量' },
+  { type: 'preacher_curl', icon: '🧘', name: '牧师椅', tag: '力量' },
+  { type: 'lat_pulldown', icon: '🔽', name: '高位下拉', tag: '力量' },
+  { type: 'situps', icon: '🧗', name: '仰卧起坐', tag: '核心' },
+  { type: 'spin_bike', icon: '🚴', name: '动感单车', tag: '有氧' },
+  { type: 'treadmill', icon: '🏃', name: '跑步机', tag: '有氧' },
+  { type: 'massage_chair', icon: '💆', name: '按摩椅', tag: '放松' },
+  { type: 'body_metrics', icon: '📏', name: '身体数据', tag: '体测' },
+  { type: 'custom', icon: '⚙️', name: '自定义', tag: '其他' }
+];
+
+// 渲染打卡页的项目卡片网格
+function renderLogProjectGrid() {
+  const grid = document.getElementById("log-project-grid");
+  if (!grid) return;
+  grid.innerHTML = LOG_PROJECTS.map(p => `
+    <button type="button" class="log-project-card glass" onclick="openLogForm('${p.type}')">
+      <span class="lp-icon">${p.icon}</span>
+      <span class="lp-name">${p.name}</span>
+      <span class="lp-tag">${p.tag}</span>
+    </button>
+  `).join("");
 }
 
 // 标签栏切换 (Tab Switch)
@@ -320,6 +406,12 @@ function switchTab(tabName) {
   // 重新渲染相关的数据/折线图 (有些界面需要动态重画)
   if (tabName === 'dashboard') {
     updateStats();
+  } else if (tabName === 'log') {
+    // 进入打卡页默认回到项目选择界面（除非正处于某个项目的参数界面）
+    const formStage = document.getElementById("log-form-stage");
+    if (!formStage || formStage.style.display === 'none') {
+      showLogSelectStage();
+    }
   } else if (tabName === 'history') {
     renderHistory();
   } else if (tabName === 'trends') {
@@ -330,10 +422,15 @@ function switchTab(tabName) {
 // 快捷方式直接跳转并选择项目
 function startQuickLog(type) {
   switchTab('log');
-  const targetPill = document.querySelector(`.exercise-pill[data-type="${type}"]`);
-  if (targetPill) {
-    targetPill.click();
-  }
+  openLogForm(type);
+}
+
+// 展示项目选择界面（隐藏参数界面）
+function showLogSelectStage() {
+  const selectStage = document.getElementById("log-select-stage");
+  const formStage = document.getElementById("log-form-stage");
+  if (selectStage) selectStage.style.display = 'block';
+  if (formStage) formStage.style.display = 'none';
 }
 
 // 步进器调整数值 (Stepper Value Adjust)
@@ -381,215 +478,599 @@ function updateSliderVal(badgeId, value) {
   }
 }
 
-// 根据运动类型动态控制表单的渲染
-function setupFormForType(type) {
-  // 隐藏所有特定表单组
-  document.querySelectorAll(".form-group-set").forEach(group => {
-    group.style.display = "none";
-  });
-  
-  // 显示表单容器，隐藏默认提示
-  document.getElementById("form-container").style.display = "block";
-  document.getElementById("form-placeholder").style.display = "none";
-  
+// 使用配重片、支持"多重量组"细化打卡的力量项目
+const WEIGHTED_STRENGTH = ['leg_press', 'shoulder_press', 'chest_press', 'preacher_curl', 'lat_pulldown'];
+
+// 打卡界面各项目的标题/徽章/单组默认值
+const LOG_META = {
+  leg_press:      { title: '腿举 (Leg Press)',        badge: '力量训练', def: { weight: 50, reps: 12, sets: 3 } },
+  shoulder_press: { title: '肩推 (Shoulder Press)',   badge: '力量训练', def: { weight: 20, reps: 10, sets: 3 } },
+  chest_press:    { title: '胸推 (Chest Press)',      badge: '力量训练', def: { weight: 30, reps: 12, sets: 3 } },
+  preacher_curl:  { title: '牧师椅 (Preacher Curl)',  badge: '力量训练', def: { weight: 15, reps: 12, sets: 3 } },
+  lat_pulldown:   { title: '高位下拉 (Lat Pulldown)', badge: '力量训练', def: { weight: 35, reps: 12, sets: 3 } },
+  situps:         { title: '仰卧起坐 (Sit-ups)',      badge: '腰腹核心' },
+  spin_bike:      { title: '动感单车 (Spin Bike)',    badge: '有氧燃脂' },
+  treadmill:      { title: '跑步机 (Treadmill)',      badge: '有氧训练' },
+  massage_chair:  { title: '按摩椅 (Massage Chair)',  badge: '拉伸放松' },
+  body_metrics:   { title: '身体数据 (Body Metrics)', badge: '体测记录' },
+  custom:         { title: '自定义项目 (Custom)',     badge: '其他' }
+};
+
+// 读取一条力量记录的重量组数组（兼容旧版扁平结构 weight/reps/sets）
+function getStrengthGroups(details) {
+  if (!details) return [];
+  if (Array.isArray(details.groups) && details.groups.length) {
+    return details.groups.map(g => ({
+      weight: Number(g.weight) || 0,
+      reps: Number(g.reps) || 0,
+      sets: Number(g.sets) || 0,
+      extraReps: Number(g.extraReps) || 0
+    }));
+  }
+  return [{
+    weight: Number(details.weight) || 0,
+    reps: Number(details.reps) || 0,
+    sets: Number(details.sets) || 0,
+    extraReps: Number(details.extraReps) || 0
+  }];
+}
+
+// 打开某个项目的参数界面（editWorkout 传入时为编辑模式）
+function openLogForm(type, editWorkout) {
+  const meta = LOG_META[type] || { title: '运动项目', badge: '' };
+  document.getElementById("log-select-stage").style.display = 'none';
+  document.getElementById("log-form-stage").style.display = 'block';
   document.getElementById("input-exercise-type").value = type;
+  document.getElementById("input-edit-id").value = editWorkout ? editWorkout.id : "";
+  document.getElementById("form-title").textContent = meta.title;
+  document.getElementById("form-badge-type").textContent = meta.badge;
+  document.getElementById("log-submit-label").textContent = editWorkout ? "保存修改" : "保存本次打卡";
 
-  // 初始化打卡日期选择器：默认今天，且不允许选择未来日期 (支持补记过去漏打的卡)
+  // 日期选择器：编辑时用原记录日期，否则默认今天；始终不允许未来日期
   const dateInput = document.getElementById("input-workout-date");
+  const today = getLocalDateString();
   if (dateInput) {
-    const today = getLocalDateString();
-    dateInput.value = today;
     dateInput.max = today;
+    dateInput.value = editWorkout ? editWorkout.date : today;
+  }
+  document.getElementById("input-notes").value = editWorkout ? (editWorkout.notes || "") : "";
+
+  // 预填数据：编辑用原记录，否则取该项目最近一次记录做智能默认
+  const source = editWorkout ? editWorkout.details : (
+    state.workouts.filter(w => w.type === type).sort((a, b) => new Date(b.date) - new Date(a.date))[0] || {}
+  ).details;
+
+  document.getElementById("log-form-fields").innerHTML = buildLogFormFields(type, source || {});
+
+  // 力量项目：初始化多重量组
+  if (WEIGHTED_STRENGTH.includes(type)) {
+    const groups = source && (Array.isArray(source.groups) || source.weight != null)
+      ? getStrengthGroups(source)
+      : [Object.assign({ extraReps: 0 }, (LOG_META[type] && LOG_META[type].def) || { weight: 20, reps: 12, sets: 3 })];
+    logStrengthGroups = groups.length ? groups : [{ weight: 20, reps: 12, sets: 3, extraReps: 0 }];
+    renderStrengthGroups(type);
   }
 
-  const formTitle = document.getElementById("form-title");
-  const formBadge = document.getElementById("form-badge-type");
-  
-  // 基于最后一次该项目的健身记录设定默认参数，提供极其丝滑的体验
-  const lastWorkout = state.workouts
-    .filter(w => w.type === type)
-    .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
-  
-  switch(type) {
-    case 'leg_press':
-      formTitle.textContent = "腿举 (Leg Press)";
-      formBadge.textContent = "力量训练";
-      document.getElementById("group-strength").style.display = "block";
-      if (lastWorkout && lastWorkout.details) {
-        document.getElementById("input-weight").value = lastWorkout.details.weight;
-        document.getElementById("input-reps").value = lastWorkout.details.reps;
-        document.getElementById("input-sets").value = lastWorkout.details.sets;
-        document.getElementById("input-extra-reps").value = lastWorkout.details.extraReps || "";
-      } else {
-        document.getElementById("input-weight").value = 50;
-        document.getElementById("input-reps").value = 12;
-        document.getElementById("input-sets").value = 3;
-        document.getElementById("input-extra-reps").value = "";
-      }
-      break;
-
-    case 'shoulder_press':
-      formTitle.textContent = "肩推 (Shoulder Press)";
-      formBadge.textContent = "力量训练";
-      document.getElementById("group-strength").style.display = "block";
-      if (lastWorkout && lastWorkout.details) {
-        document.getElementById("input-weight").value = lastWorkout.details.weight;
-        document.getElementById("input-reps").value = lastWorkout.details.reps;
-        document.getElementById("input-sets").value = lastWorkout.details.sets;
-        document.getElementById("input-extra-reps").value = lastWorkout.details.extraReps || "";
-      } else {
-        document.getElementById("input-weight").value = 20;
-        document.getElementById("input-reps").value = 10;
-        document.getElementById("input-sets").value = 3;
-        document.getElementById("input-extra-reps").value = "";
-      }
-      break;
-
-    case 'chest_press':
-      formTitle.textContent = "胸推 (Chest Press)";
-      formBadge.textContent = "力量训练";
-      document.getElementById("group-strength").style.display = "block";
-      if (lastWorkout && lastWorkout.details) {
-        document.getElementById("input-weight").value = lastWorkout.details.weight;
-        document.getElementById("input-reps").value = lastWorkout.details.reps;
-        document.getElementById("input-sets").value = lastWorkout.details.sets;
-        document.getElementById("input-extra-reps").value = lastWorkout.details.extraReps || "";
-      } else {
-        document.getElementById("input-weight").value = 30;
-        document.getElementById("input-reps").value = 12;
-        document.getElementById("input-sets").value = 3;
-        document.getElementById("input-extra-reps").value = "";
-      }
-      break;
-
-    case 'preacher_curl':
-      formTitle.textContent = "牧师椅 (Preacher Curl)";
-      formBadge.textContent = "力量训练";
-      document.getElementById("group-strength").style.display = "block";
-      if (lastWorkout && lastWorkout.details) {
-        document.getElementById("input-weight").value = lastWorkout.details.weight;
-        document.getElementById("input-reps").value = lastWorkout.details.reps;
-        document.getElementById("input-sets").value = lastWorkout.details.sets;
-        document.getElementById("input-extra-reps").value = lastWorkout.details.extraReps || "";
-      } else {
-        document.getElementById("input-weight").value = 15;
-        document.getElementById("input-reps").value = 12;
-        document.getElementById("input-sets").value = 3;
-        document.getElementById("input-extra-reps").value = "";
-      }
-      break;
-
-    case 'lat_pulldown':
-      formTitle.textContent = "高位下拉 (Lat Pulldown)";
-      formBadge.textContent = "力量训练";
-      document.getElementById("group-strength").style.display = "block";
-      if (lastWorkout && lastWorkout.details) {
-        document.getElementById("input-weight").value = lastWorkout.details.weight;
-        document.getElementById("input-reps").value = lastWorkout.details.reps;
-        document.getElementById("input-sets").value = lastWorkout.details.sets;
-        document.getElementById("input-extra-reps").value = lastWorkout.details.extraReps || "";
-      } else {
-        document.getElementById("input-weight").value = 35;
-        document.getElementById("input-reps").value = 12;
-        document.getElementById("input-sets").value = 3;
-        document.getElementById("input-extra-reps").value = "";
-      }
-      break;
-
-    case 'situps':
-      formTitle.textContent = "仰卧起坐 (Sit-ups)";
-      formBadge.textContent = "腰腹核心";
-      document.getElementById("group-situps").style.display = "block";
-      if (lastWorkout && lastWorkout.details) {
-        document.getElementById("input-situps-reps").value = lastWorkout.details.reps;
-        document.getElementById("input-situps-sets").value = lastWorkout.details.sets;
-        document.getElementById("input-situps-extra-reps").value = lastWorkout.details.extraReps || "";
-      } else {
-        document.getElementById("input-situps-reps").value = 15;
-        document.getElementById("input-situps-sets").value = 3;
-        document.getElementById("input-situps-extra-reps").value = "";
-      }
-      break;
-      
-    case 'spin_bike':
-      formTitle.textContent = "动感单车 (Spin Bike)";
-      formBadge.textContent = "有氧燃脂";
-      document.getElementById("group-spin-bike").style.display = "block";
-      if (lastWorkout && lastWorkout.details) {
-        document.getElementById("input-bike-resistance").value = lastWorkout.details.resistance;
-        document.getElementById("input-bike-time").value = lastWorkout.details.time;
-      } else {
-        document.getElementById("input-bike-resistance").value = 8;
-        document.getElementById("input-bike-time").value = 20;
-      }
-      break;
-      
-    case 'treadmill':
-      formTitle.textContent = "跑步机 (Treadmill)";
-      formBadge.textContent = "有氧训练";
-      document.getElementById("group-treadmill").style.display = "block";
-      if (lastWorkout && lastWorkout.details) {
-        const mode = lastWorkout.details.mode || "walk";
-        document.querySelector(`input[name="treadmill-mode"][value="${mode}"]`).checked = true;
-        document.getElementById("input-treadmill-speed").value = lastWorkout.details.speed;
-        updateSliderVal('treadmill-speed-val', lastWorkout.details.speed);
-        document.getElementById("input-treadmill-incline").value = lastWorkout.details.incline;
-        updateSliderVal('treadmill-incline-val', lastWorkout.details.incline);
-        document.getElementById("input-treadmill-time").value = lastWorkout.details.time;
-      } else {
-        document.querySelector(`input[name="treadmill-mode"][value="walk"]`).checked = true;
-        document.getElementById("input-treadmill-speed").value = 6.0;
-        updateSliderVal('treadmill-speed-val', 6.0);
-        document.getElementById("input-treadmill-incline").value = 3;
-        updateSliderVal('treadmill-incline-val', 3);
-        document.getElementById("input-treadmill-time").value = 30;
-      }
-      updateCalorieEstimate();
-      break;
-      
-    case 'massage_chair':
-      formTitle.textContent = "按摩椅 (Massage Chair)";
-      formBadge.textContent = "拉伸放松";
-      document.getElementById("group-massage-chair").style.display = "block";
-      if (lastWorkout && lastWorkout.details) {
-        document.getElementById("input-massage-mode").value = lastWorkout.details.mode;
-        document.getElementById("input-massage-duration").value = lastWorkout.details.duration;
-        document.querySelector(`input[name="massage-intensity"][value="${lastWorkout.details.intensity}"]`).checked = true;
-      } else {
-        document.getElementById("input-massage-mode").value = "自动舒缓";
-        document.getElementById("input-massage-duration").value = "30";
-        document.querySelector(`input[name="massage-intensity"][value="2"]`).checked = true;
-      }
-      break;
-      
-    case 'custom':
-      formTitle.textContent = "自定义项目 (Custom)";
-      formBadge.textContent = "其他";
-      document.getElementById("group-custom").style.display = "block";
-      document.getElementById("input-custom-name").value = "";
-      document.getElementById("input-custom-value").value = "";
-      document.getElementById("input-custom-sets").value = "";
-      break;
+  // 有氧变速：初始化变速段
+  if (type === 'treadmill' || type === 'spin_bike') {
+    logSegments = (source && source.variableSpeed && Array.isArray(source.segments))
+      ? source.segments.map(s => ({ speed: Number(s.speed) || 0, duration: Number(s.duration) || 0 }))
+      : [{ speed: (type === 'treadmill' ? 8 : 12), duration: 2 }, { speed: (type === 'treadmill' ? 5 : 6), duration: 2 }];
+    renderSegments(type);
+    updateCalorieEstimate();
   }
+
+  window.scrollTo({ top: 0, behavior: 'auto' });
+}
+
+// 返回项目选择界面
+function closeLogForm() {
+  document.getElementById("input-edit-id").value = "";
+  showLogSelectStage();
+  renderLogProjectGrid();
+}
+
+// 根据类型构建参数字段 HTML
+function buildLogFormFields(type, d) {
+  if (WEIGHTED_STRENGTH.includes(type)) {
+    return `
+      <div id="strength-groups"></div>
+      <button type="button" class="add-group-btn" onclick="addStrengthGroup('${type}')">
+        ＋ 添加其他重量组（同一天同项目合并为一条记录）
+      </button>
+    `;
+  }
+  if (type === 'situps') {
+    return buildSitupsFields(d);
+  }
+  if (type === 'treadmill') {
+    return buildTreadmillFields(d);
+  }
+  if (type === 'spin_bike') {
+    return buildSpinBikeFields(d);
+  }
+  if (type === 'massage_chair') {
+    return buildMassageFields(d);
+  }
+  if (type === 'body_metrics') {
+    return buildBodyMetricsFields(d && (d.weight != null || d.arm != null || d.waist != null || d.chest != null) ? d : null);
+  }
+  return buildCustomFields();
+}
+
+// ---- 力量：多重量组 ----
+let logStrengthGroups = [];
+
+function readStrengthGroupsFromDom() {
+  const rows = document.querySelectorAll("#strength-groups .strength-group");
+  const arr = [];
+  rows.forEach(row => {
+    arr.push({
+      weight: parseFloat(row.querySelector('.sg-weight').value) || 0,
+      reps: parseInt(row.querySelector('.sg-reps').value) || 0,
+      sets: parseInt(row.querySelector('.sg-sets').value) || 0,
+      extraReps: parseInt(row.querySelector('.sg-extra').value) || 0
+    });
+  });
+  if (arr.length) logStrengthGroups = arr;
+}
+
+function renderStrengthGroups(type) {
+  const container = document.getElementById("strength-groups");
+  if (!container) return;
+  const multi = logStrengthGroups.length > 1;
+  container.innerHTML = logStrengthGroups.map((g, i) => `
+    <div class="strength-group" data-idx="${i}">
+      <div class="sg-head">
+        <span class="sg-title">${multi ? `第 ${i + 1} 组重量` : '重量组'}</span>
+        ${multi ? `<button type="button" class="sg-remove" onclick="removeStrengthGroup('${type}', ${i})">移除</button>` : ''}
+      </div>
+      <div class="form-row">
+        <label>重量 (kg) <small>—— 以 5kg 为最小档位</small></label>
+        <div class="stepper-input">
+          <button type="button" class="step-btn decrease-large" onclick="adjustValue('sg-weight-${i}', -5)">-5</button>
+          <input type="number" id="sg-weight-${i}" class="sg-weight" value="${g.weight}" min="0" max="300" step="5">
+          <button type="button" class="step-btn increase-large" onclick="adjustValue('sg-weight-${i}', 5)">+5</button>
+        </div>
+      </div>
+      <div class="form-row-grid">
+        <div class="form-row">
+          <label>每组次数</label>
+          <div class="stepper-input">
+            <button type="button" class="step-btn decrease" onclick="adjustValue('sg-reps-${i}', -1)">-</button>
+            <input type="number" id="sg-reps-${i}" class="sg-reps" value="${g.reps}" min="1" max="100">
+            <button type="button" class="step-btn increase" onclick="adjustValue('sg-reps-${i}', 1)">+</button>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>组数</label>
+          <div class="stepper-input">
+            <button type="button" class="step-btn decrease" onclick="adjustValue('sg-sets-${i}', -1)">-</button>
+            <input type="number" id="sg-sets-${i}" class="sg-sets" value="${g.sets}" min="1" max="20">
+            <button type="button" class="step-btn increase" onclick="adjustValue('sg-sets-${i}', 1)">+</button>
+          </div>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>组外次数 <small>—— 可选，正式组数之外力竭/额外加练</small></label>
+        <div class="stepper-input">
+          <button type="button" class="step-btn decrease" onclick="adjustValue('sg-extra-${i}', -1)">-</button>
+          <input type="number" id="sg-extra-${i}" class="sg-extra" value="${g.extraReps || ''}" placeholder="0" min="0" max="100">
+          <button type="button" class="step-btn increase" onclick="adjustValue('sg-extra-${i}', 1)">+</button>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function addStrengthGroup(type) {
+  readStrengthGroupsFromDom();
+  const last = logStrengthGroups[logStrengthGroups.length - 1] || { weight: 20, reps: 12, sets: 3 };
+  logStrengthGroups.push({ weight: last.weight, reps: last.reps, sets: last.sets, extraReps: 0 });
+  renderStrengthGroups(type);
+}
+
+function removeStrengthGroup(type, idx) {
+  readStrengthGroupsFromDom();
+  if (logStrengthGroups.length <= 1) return;
+  logStrengthGroups.splice(idx, 1);
+  renderStrengthGroups(type);
+}
+
+// ---- 仰卧起坐 ----
+function buildSitupsFields(d) {
+  const reps = d.reps || 15, sets = d.sets || 3, extra = d.extraReps || '';
+  return `
+    <div class="form-row-grid">
+      <div class="form-row">
+        <label>每组次数</label>
+        <div class="stepper-input">
+          <button type="button" class="step-btn decrease" onclick="adjustValue('input-situps-reps', -5)">-5</button>
+          <input type="number" id="input-situps-reps" value="${reps}" min="1" max="200">
+          <button type="button" class="step-btn increase" onclick="adjustValue('input-situps-reps', 5)">+5</button>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>组数</label>
+        <div class="stepper-input">
+          <button type="button" class="step-btn decrease" onclick="adjustValue('input-situps-sets', -1)">-</button>
+          <input type="number" id="input-situps-sets" value="${sets}" min="1" max="20">
+          <button type="button" class="step-btn increase" onclick="adjustValue('input-situps-sets', 1)">+</button>
+        </div>
+      </div>
+    </div>
+    <div class="form-row">
+      <label>组外次数 <small>—— 可选</small></label>
+      <div class="stepper-input">
+        <button type="button" class="step-btn decrease" onclick="adjustValue('input-situps-extra-reps', -1)">-</button>
+        <input type="number" id="input-situps-extra-reps" value="${extra}" placeholder="0" min="0" max="200">
+        <button type="button" class="step-btn increase" onclick="adjustValue('input-situps-extra-reps', 1)">+</button>
+      </div>
+    </div>
+  `;
+}
+
+// ---- 有氧：变速段（跑步机 / 单车共用） ----
+let logSegments = [];
+
+function readSegmentsFromDom() {
+  const rows = document.querySelectorAll("#var-segments .var-seg");
+  const arr = [];
+  rows.forEach(row => {
+    arr.push({
+      speed: parseFloat(row.querySelector('.seg-speed').value) || 0,
+      duration: parseFloat(row.querySelector('.seg-dur').value) || 0
+    });
+  });
+  logSegments = arr;
+}
+
+function renderSegments(type) {
+  const container = document.getElementById("var-segments");
+  if (!container) return;
+  const unit = type === 'treadmill' ? 'km/h' : '档';
+  const step = type === 'treadmill' ? '0.5' : '1';
+  container.innerHTML = logSegments.map((s, i) => `
+    <div class="var-seg" data-idx="${i}">
+      <div class="var-seg-fields">
+        <div class="form-row">
+          <label>速度 (${unit})</label>
+          <input type="number" class="seg-speed glass-input" value="${s.speed}" min="0" max="24" step="${step}" oninput="updateCalorieEstimate()">
+        </div>
+        <div class="form-row">
+          <label>间隔时长 (分钟)</label>
+          <input type="number" class="seg-dur glass-input" value="${s.duration}" min="0" max="180" step="1" oninput="updateCalorieEstimate()">
+        </div>
+      </div>
+      ${logSegments.length > 1 ? `<button type="button" class="sg-remove" onclick="removeSegment('${type}', ${i})">移除</button>` : ''}
+    </div>
+  `).join('');
+}
+
+function addSegment(type) {
+  readSegmentsFromDom();
+  const last = logSegments[logSegments.length - 1] || { speed: (type === 'treadmill' ? 6 : 8), duration: 2 };
+  logSegments.push({ speed: last.speed, duration: last.duration });
+  renderSegments(type);
+  updateCalorieEstimate();
+}
+
+function removeSegment(type, idx) {
+  readSegmentsFromDom();
+  logSegments.splice(idx, 1);
+  if (logSegments.length === 0) logSegments.push({ speed: (type === 'treadmill' ? 6 : 8), duration: 2 });
+  renderSegments(type);
+  updateCalorieEstimate();
+}
+
+// 切换变速模式显示
+function onVarSpeedToggle(type) {
+  const on = document.getElementById("var-speed-toggle").checked;
+  const simple = document.getElementById(type === 'treadmill' ? 'tm-simple' : 'bike-simple');
+  const variable = document.getElementById("var-speed-block");
+  if (simple) simple.style.display = on ? 'none' : 'block';
+  if (variable) variable.style.display = on ? 'block' : 'none';
+  if (on && logSegments.length === 0) {
+    logSegments = [{ speed: (type === 'treadmill' ? 8 : 12), duration: 2 }, { speed: (type === 'treadmill' ? 5 : 6), duration: 2 }];
+    renderSegments(type);
+  }
+  updateCalorieEstimate();
+}
+
+// 变速段公共区块（热身 / 变速段 / 冲刺 / 总时长）
+function buildVariableBlock(type, d) {
+  const unit = type === 'treadmill' ? 'km/h' : '档';
+  const step = type === 'treadmill' ? '0.5' : '1';
+  const wu = (d && d.warmup) || { speed: 0, duration: 0 };
+  const sp = (d && d.sprint) || { speed: 0, duration: 0 };
+  const total = (d && d.variableSpeed && d.time) ? d.time : '';
+  const inclineRow = type === 'treadmill' ? `
+      <div class="form-row">
+        <label>坡度 (%)</label>
+        <div class="stepper-input">
+          <button type="button" class="step-btn decrease" onclick="adjustValue('input-tmv-incline', -1); updateCalorieEstimate();">-</button>
+          <input type="number" id="input-tmv-incline" value="${(d && d.incline != null) ? d.incline : 2}" min="0" max="15" onchange="updateCalorieEstimate()">
+          <button type="button" class="step-btn increase" onclick="adjustValue('input-tmv-incline', 1); updateCalorieEstimate();">+</button>
+        </div>
+      </div>` : '';
+  const estRow = type === 'treadmill' ? `
+      <div class="form-row estimation-output">
+        <div class="est-box"><span class="est-label">预计距离</span><span class="est-value" id="est-distance-var">0.00 <small>km</small></span></div>
+        <div class="est-box"><span class="est-label">预计消耗</span><span class="est-value text-glowing" id="est-calories-var">0 <small>kcal</small></span></div>
+      </div>` : '';
+  return `
+    <div id="var-speed-block" style="display:${(d && d.variableSpeed) ? 'block' : 'none'}">
+      ${inclineRow}
+      <div class="var-sub-title">🔥 热身段 <small>（速度与时长可留 0）</small></div>
+      <div class="var-seg-fields">
+        <div class="form-row"><label>速度 (${unit})</label><input type="number" id="vs-warmup-speed" class="glass-input" value="${wu.speed || 0}" min="0" max="24" step="${step}" oninput="updateCalorieEstimate()"></div>
+        <div class="form-row"><label>时长 (分钟)</label><input type="number" id="vs-warmup-dur" class="glass-input" value="${wu.duration || 0}" min="0" max="180" step="1" oninput="updateCalorieEstimate()"></div>
+      </div>
+      <div class="var-sub-title">⚡ 变速段 <small>（不同速度与各自间隔时长）</small></div>
+      <div id="var-segments"></div>
+      <button type="button" class="add-group-btn" onclick="addSegment('${type}')">＋ 添加一个变速段</button>
+      <div class="var-sub-title">🚀 冲刺段 <small>（速度与时长可留 0）</small></div>
+      <div class="var-seg-fields">
+        <div class="form-row"><label>速度 (${unit})</label><input type="number" id="vs-sprint-speed" class="glass-input" value="${sp.speed || 0}" min="0" max="24" step="${step}" oninput="updateCalorieEstimate()"></div>
+        <div class="form-row"><label>时长 (分钟)</label><input type="number" id="vs-sprint-dur" class="glass-input" value="${sp.duration || 0}" min="0" max="180" step="1" oninput="updateCalorieEstimate()"></div>
+      </div>
+      <div class="form-row">
+        <label>总时长 (分钟) <small>—— 留空则按各段之和</small></label>
+        <input type="number" id="vs-total" class="glass-input" value="${total}" min="0" max="300" step="1" placeholder="各段之和" oninput="updateCalorieEstimate()">
+      </div>
+      ${estRow}
+    </div>
+  `;
+}
+
+// ---- 跑步机 ----
+function buildTreadmillFields(d) {
+  const variable = !!(d && d.variableSpeed);
+  const mode = (d && d.mode) || 'walk';
+  const speed = (d && !variable && d.speed) ? d.speed : 6.0;
+  const incline = (d && d.incline != null) ? d.incline : 3;
+  const time = (d && !variable && d.time) ? d.time : 30;
+  return `
+    <div class="form-row var-toggle-row">
+      <label class="var-toggle"><input type="checkbox" id="var-speed-toggle" ${variable ? 'checked' : ''} onchange="onVarSpeedToggle('treadmill')"> 变速模式（分段配速）</label>
+    </div>
+    <div id="tm-simple" style="display:${variable ? 'none' : 'block'}">
+      <div class="form-row">
+        <label>运动类型</label>
+        <div class="segmented-control">
+          <label class="segment-item"><input type="radio" name="treadmill-mode" value="walk" ${mode === 'walk' ? 'checked' : ''} onchange="updateCalorieEstimate()"><span>🚶 快走</span></label>
+          <label class="segment-item"><input type="radio" name="treadmill-mode" value="run" ${mode === 'run' ? 'checked' : ''} onchange="updateCalorieEstimate()"><span>🏃 跑步</span></label>
+        </div>
+      </div>
+      <div class="form-row-grid">
+        <div class="form-row">
+          <label>速度 (km/h)</label>
+          <div class="slider-container">
+            <input type="range" id="input-treadmill-speed" min="2" max="20" step="0.5" value="${speed}" oninput="updateSliderVal('treadmill-speed-val', this.value); updateCalorieEstimate();">
+            <span class="slider-badge"><span id="treadmill-speed-val">${speed}</span> km/h</span>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>坡度 (%)</label>
+          <div class="slider-container">
+            <input type="range" id="input-treadmill-incline" min="0" max="15" step="1" value="${incline}" oninput="updateSliderVal('treadmill-incline-val', this.value); updateCalorieEstimate();">
+            <span class="slider-badge"><span id="treadmill-incline-val">${incline}</span> %</span>
+          </div>
+        </div>
+      </div>
+      <div class="form-row-grid">
+        <div class="form-row">
+          <label>时长 (分钟)</label>
+          <div class="stepper-input">
+            <button type="button" class="step-btn decrease" onclick="adjustValue('input-treadmill-time', -5); updateCalorieEstimate();">-5</button>
+            <input type="number" id="input-treadmill-time" value="${time}" min="1" max="180" onchange="updateCalorieEstimate()">
+            <button type="button" class="step-btn increase" onclick="adjustValue('input-treadmill-time', 5); updateCalorieEstimate();">+5</button>
+          </div>
+        </div>
+        <div class="form-row estimation-output">
+          <div class="est-box"><span class="est-label">预计距离</span><span class="est-value" id="est-distance">3.00 <small>km</small></span></div>
+          <div class="est-box"><span class="est-label">预计消耗</span><span class="est-value text-glowing" id="est-calories">185 <small>kcal</small></span></div>
+        </div>
+      </div>
+    </div>
+    ${buildVariableBlock('treadmill', d)}
+  `;
+}
+
+// ---- 动感单车 ----
+function buildSpinBikeFields(d) {
+  const variable = !!(d && d.variableSpeed);
+  const resistance = (d && !variable && d.resistance) ? d.resistance : 8;
+  const time = (d && !variable && d.time) ? d.time : 20;
+  return `
+    <div class="form-row var-toggle-row">
+      <label class="var-toggle"><input type="checkbox" id="var-speed-toggle" ${variable ? 'checked' : ''} onchange="onVarSpeedToggle('spin_bike')"> 变速模式（分段配速）</label>
+    </div>
+    <div id="bike-simple" style="display:${variable ? 'none' : 'block'}">
+      <div class="form-row-grid">
+        <div class="form-row">
+          <label>阻力档位 (1-24)</label>
+          <div class="stepper-input">
+            <button type="button" class="step-btn decrease" onclick="adjustValue('input-bike-resistance', -1)">-</button>
+            <input type="number" id="input-bike-resistance" value="${resistance}" min="1" max="24">
+            <button type="button" class="step-btn increase" onclick="adjustValue('input-bike-resistance', 1)">+</button>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>骑行时长 (分钟)</label>
+          <div class="stepper-input">
+            <button type="button" class="step-btn decrease" onclick="adjustValue('input-bike-time', -5)">-5</button>
+            <input type="number" id="input-bike-time" value="${time}" min="1" max="180">
+            <button type="button" class="step-btn increase" onclick="adjustValue('input-bike-time', 5)">+5</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    ${buildVariableBlock('spin_bike', d)}
+  `;
+}
+
+// ---- 按摩椅 ----
+function buildMassageFields(d) {
+  const mode = (d && d.mode) || '自动舒缓';
+  const duration = (d && d.duration) || 30;
+  const intensity = (d && d.intensity) || 2;
+  const modes = ['自动舒缓', '颈肩重点', '全身拉伸', '腰臀放松'];
+  const durations = [15, 30, 45, 60, 75, 90, 105, 120];
+  const durLabels = { 15: '15 分钟', 30: '30 分钟', 45: '45 分钟', 60: '1 小时', 75: '1 小时 15 分', 90: '1 小时 30 分', 105: '1 小时 45 分', 120: '2 小时' };
+  return `
+    <div class="form-row">
+      <label>按摩模式</label>
+      <div class="glass-select-wrapper">
+        <select id="input-massage-mode">${modes.map(m => `<option value="${m}" ${m === mode ? 'selected' : ''}>${m}</option>`).join('')}</select>
+      </div>
+    </div>
+    <div class="form-row-grid">
+      <div class="form-row">
+        <label>按摩时长</label>
+        <div class="glass-select-wrapper">
+          <select id="input-massage-duration">${durations.map(v => `<option value="${v}" ${v === Number(duration) ? 'selected' : ''}>${durLabels[v]}</option>`).join('')}</select>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>强度级别</label>
+        <div class="segmented-control">
+          <label class="segment-item"><input type="radio" name="massage-intensity" value="1" ${intensity == 1 ? 'checked' : ''}><span>弱</span></label>
+          <label class="segment-item"><input type="radio" name="massage-intensity" value="2" ${intensity == 2 ? 'checked' : ''}><span>中</span></label>
+          <label class="segment-item"><input type="radio" name="massage-intensity" value="3" ${intensity == 3 ? 'checked' : ''}><span>强</span></label>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ---- 自定义 ----
+function buildCustomFields() {
+  return `
+    <div class="form-row">
+      <label>运动项目名称</label>
+      <input type="text" id="input-custom-name" placeholder="请输入运动名称 (例如: 哑铃飞鸟)" class="glass-input">
+    </div>
+    <div class="form-row-grid">
+      <div class="form-row">
+        <label>关键数据 (如重量/次数)</label>
+        <input type="text" id="input-custom-value" placeholder="例如: 15kg / 12次" class="glass-input">
+      </div>
+      <div class="form-row">
+        <label>组数 (非必填)</label>
+        <input type="number" id="input-custom-sets" placeholder="例如: 3" class="glass-input" min="1">
+      </div>
+    </div>
+  `;
+}
+
+// ---- 身体数据（体重/臂围/腰围/胸围） ----
+function buildBodyMetricsFields(existing) {
+  // 预填：编辑传入 existing，否则取最近一次身体数据；体重再兜底到设置体重
+  const last = existing || (state.measurements && state.measurements.length ? state.measurements[0] : null) || {};
+  const weight = last.weight != null ? Number(last.weight).toFixed(1) : (Number(state.settings.weight) || 70).toFixed(1);
+  return `
+    <div class="form-row">
+      <label>体重 (kg) <small>—— 精确到小数点后一位</small></label>
+      <div class="stepper-input">
+        <button type="button" class="step-btn decrease" onclick="adjustValue('input-bm-weight', -0.5)">-</button>
+        <input type="number" id="input-bm-weight" value="${weight}" min="20" max="300" step="0.1">
+        <button type="button" class="step-btn increase" onclick="adjustValue('input-bm-weight', 0.5)">+</button>
+      </div>
+    </div>
+    <div class="form-row-grid">
+      <div class="form-row">
+        <label>臂围 (cm)</label>
+        <input type="number" id="input-bm-arm" class="glass-input" value="${last.arm != null ? last.arm : ''}" placeholder="选填" min="0" max="100" step="0.1">
+      </div>
+      <div class="form-row">
+        <label>腰围 (cm)</label>
+        <input type="number" id="input-bm-waist" class="glass-input" value="${last.waist != null ? last.waist : ''}" placeholder="选填" min="0" max="200" step="0.1">
+      </div>
+    </div>
+    <div class="form-row">
+      <label>胸围 (cm)</label>
+      <input type="number" id="input-bm-chest" class="glass-input" value="${last.chest != null ? last.chest : ''}" placeholder="选填" min="0" max="200" step="0.1">
+    </div>
+  `;
 }
 
 // ==========================================================================
 // 3. 卡路里与有氧指标计算算法 (Calorie Algorithm)
 // ==========================================================================
 function updateCalorieEstimate() {
-  const isTreadmillVisible = document.getElementById("group-treadmill").style.display === "block";
-  if (!isTreadmillVisible) return;
+  const typeEl = document.getElementById("input-exercise-type");
+  const type = typeEl ? typeEl.value : '';
+  if (type !== 'treadmill') return; // 目前仅跑步机做距离/热量估算
 
-  const mode = document.querySelector('input[name="treadmill-mode"]:checked').value; // 'walk' or 'run'
-  const speed = parseFloat(document.getElementById("input-treadmill-speed").value) || 0; // km/h
+  const varToggle = document.getElementById("var-speed-toggle");
+  const variable = varToggle && varToggle.checked;
+
+  if (variable) {
+    const est = computeVariableTreadmillFromDom();
+    const distEl = document.getElementById("est-distance-var");
+    const calEl = document.getElementById("est-calories-var");
+    if (distEl) distEl.innerHTML = `${est.distance.toFixed(2)} <small>km</small>`;
+    if (calEl) calEl.innerHTML = `${est.calories} <small>kcal</small>`;
+    return est;
+  }
+
+  const modeEl = document.querySelector('input[name="treadmill-mode"]:checked');
+  const speedEl = document.getElementById("input-treadmill-speed");
+  if (!modeEl || !speedEl) return;
+  const mode = modeEl.value; // 'walk' or 'run'
+  const speed = parseFloat(speedEl.value) || 0; // km/h
   const incline = parseFloat(document.getElementById("input-treadmill-incline").value) || 0; // %
   const time = parseFloat(document.getElementById("input-treadmill-time").value) || 0; // min
 
   const est = computeTreadmillEstimate(mode, speed, incline, time);
-  document.getElementById("est-distance").innerHTML = `${est.distance.toFixed(2)} <small>km</small>`;
-  document.getElementById("est-calories").innerHTML = `${est.calories} <small>kcal</small>`;
+  const distEl = document.getElementById("est-distance");
+  const calEl = document.getElementById("est-calories");
+  if (distEl) distEl.innerHTML = `${est.distance.toFixed(2)} <small>km</small>`;
+  if (calEl) calEl.innerHTML = `${est.calories} <small>kcal</small>`;
 
   return { distance: parseFloat(est.distance.toFixed(2)), calories: est.calories };
+}
+
+// 从变速表单读取分段配置
+function readVariableTreadmillFromDom() {
+  readSegmentsFromDom();
+  const num = id => parseFloat((document.getElementById(id) || {}).value) || 0;
+  return {
+    incline: num('input-tmv-incline'),
+    warmup: { speed: num('vs-warmup-speed'), duration: num('vs-warmup-dur') },
+    segments: logSegments.map(s => ({ speed: s.speed, duration: s.duration })),
+    sprint: { speed: num('vs-sprint-speed'), duration: num('vs-sprint-dur') },
+    total: num('vs-total')
+  };
+}
+
+function computeVariableTreadmillFromDom() {
+  const cfg = readVariableTreadmillFromDom();
+  return computeVariableTreadmill(cfg.incline, cfg.warmup, cfg.segments, cfg.sprint, cfg.total);
+}
+
+// 变速跑步机的距离/热量估算：对热身段、各变速段、冲刺段分别用 ACSM 公式估算后求和；
+// 若填写了总时长且大于各段之和，则按比例放大（把总时长视为整段训练的真实时长）
+function computeVariableTreadmill(incline, warmup, segments, sprint, total) {
+  const parts = [warmup, ...(segments || []), sprint].filter(p => p && p.speed > 0 && p.duration > 0);
+  let dist = 0, cal = 0, partsSum = 0;
+  parts.forEach(p => {
+    const e = computeTreadmillEstimate('auto', p.speed, incline || 0, p.duration);
+    dist += e.distance;
+    cal += e.calories;
+    partsSum += p.duration;
+  });
+  let time = partsSum;
+  if (total && partsSum > 0 && total > partsSum) {
+    const scale = total / partsSum;
+    dist *= scale;
+    cal *= scale;
+    time = total;
+  } else if (total && partsSum === 0) {
+    time = total;
+  }
+  return { distance: parseFloat(dist.toFixed(2)), calories: Math.round(cal), time };
 }
 
 // 纯函数版跑步机估算 (不依赖 DOM)，供表单实时预览和 AI 推荐一键打卡复用，保证两处口径一致
@@ -632,29 +1113,38 @@ function computeTreadmillEstimate(mode, speed, incline, time) {
 // ==========================================================================
 function saveWorkout(event) {
   event.preventDefault();
-  
+
   const type = document.getElementById("input-exercise-type").value;
   if (!type) return;
-  
-  const notes = document.getElementById("input-notes").value.trim();
+
+  const editId = document.getElementById("input-edit-id").value;
 
   // 打卡日期：优先取用户在日期选择器中选定的日期 (支持补记)，默认为本地时区的今天
   const dateToday = getLocalDateString();
   const dateInput = document.getElementById("input-workout-date");
   let workoutDate = (dateInput && dateInput.value) ? dateInput.value : dateToday;
   if (workoutDate > dateToday) workoutDate = dateToday; // 禁止未来日期
-  
+
+  // 身体数据走独立存储，单独处理后返回
+  if (type === 'body_metrics') {
+    saveBodyMetrics(workoutDate, editId);
+    return;
+  }
+
+  const notes = document.getElementById("input-notes").value.trim();
   let details = {};
-  
+
   // 提取对应表单参数
-  if (['leg_press', 'shoulder_press', 'chest_press', 'preacher_curl', 'lat_pulldown'].includes(type)) {
-    details = {
-      weight: parseFloat(document.getElementById("input-weight").value) || 0,
-      reps: parseInt(document.getElementById("input-reps").value) || 0,
-      sets: parseInt(document.getElementById("input-sets").value) || 0,
-      // 组外次数：正式组数之外，力竭/额外加练的次数，可选
-      extraReps: parseInt(document.getElementById("input-extra-reps").value) || 0
-    };
+  if (WEIGHTED_STRENGTH.includes(type)) {
+    readStrengthGroupsFromDom();
+    const groups = logStrengthGroups
+      .map(g => ({ weight: g.weight || 0, reps: g.reps || 0, sets: g.sets || 0, extraReps: g.extraReps || 0 }))
+      .filter(g => g.reps > 0 && g.sets > 0);
+    if (groups.length === 0) {
+      alert("请至少填写一组有效的次数与组数！");
+      return;
+    }
+    details = { groups: groups };
   } else if (type === 'situps') {
     details = {
       reps: parseInt(document.getElementById("input-situps-reps").value) || 0,
@@ -662,20 +1152,49 @@ function saveWorkout(event) {
       extraReps: parseInt(document.getElementById("input-situps-extra-reps").value) || 0
     };
   } else if (type === 'spin_bike') {
-    details = {
-      resistance: parseInt(document.getElementById("input-bike-resistance").value) || 0,
-      time: parseInt(document.getElementById("input-bike-time").value) || 0
-    };
+    const varToggle = document.getElementById("var-speed-toggle");
+    if (varToggle && varToggle.checked) {
+      const cfg = readVariableTreadmillFromDom(); // 复用读取逻辑（单位为档位，字段名沿用 speed）
+      const partsSum = cfg.warmup.duration + cfg.segments.reduce((s, x) => s + x.duration, 0) + cfg.sprint.duration;
+      details = {
+        variableSpeed: true,
+        warmup: cfg.warmup,
+        segments: cfg.segments,
+        sprint: cfg.sprint,
+        time: cfg.total || partsSum
+      };
+    } else {
+      details = {
+        resistance: parseInt(document.getElementById("input-bike-resistance").value) || 0,
+        time: parseInt(document.getElementById("input-bike-time").value) || 0
+      };
+    }
   } else if (type === 'treadmill') {
-    const est = updateCalorieEstimate();
-    details = {
-      mode: document.querySelector('input[name="treadmill-mode"]:checked').value,
-      speed: parseFloat(document.getElementById("input-treadmill-speed").value) || 0,
-      incline: parseFloat(document.getElementById("input-treadmill-incline").value) || 0,
-      time: parseInt(document.getElementById("input-treadmill-time").value) || 0,
-      distance: est.distance,
-      calories: est.calories
-    };
+    const varToggle = document.getElementById("var-speed-toggle");
+    if (varToggle && varToggle.checked) {
+      const cfg = readVariableTreadmillFromDom();
+      const est = computeVariableTreadmill(cfg.incline, cfg.warmup, cfg.segments, cfg.sprint, cfg.total);
+      details = {
+        variableSpeed: true,
+        incline: cfg.incline,
+        warmup: cfg.warmup,
+        segments: cfg.segments,
+        sprint: cfg.sprint,
+        time: est.time,
+        distance: est.distance,
+        calories: est.calories
+      };
+    } else {
+      const est = updateCalorieEstimate();
+      details = {
+        mode: document.querySelector('input[name="treadmill-mode"]:checked').value,
+        speed: parseFloat(document.getElementById("input-treadmill-speed").value) || 0,
+        incline: parseFloat(document.getElementById("input-treadmill-incline").value) || 0,
+        time: parseInt(document.getElementById("input-treadmill-time").value) || 0,
+        distance: est.distance,
+        calories: est.calories
+      };
+    }
   } else if (type === 'massage_chair') {
     details = {
       mode: document.getElementById("input-massage-mode").value,
@@ -694,47 +1213,118 @@ function saveWorkout(event) {
       sets: parseInt(document.getElementById("input-custom-sets").value) || null
     };
   }
-  
-  // 构建单条 Workout 对象 (id 附加随机后缀，避免同一毫秒内连续打卡产生重复 id)
-  const newWorkout = {
-    id: "workout-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8),
-    date: workoutDate,
-    type: type,
-    details: details,
-    notes: notes
-  };
-  
-  // 插入到记录库最前端并存储
-  state.workouts.unshift(newWorkout);
-  localStorage.setItem("chocozap_workouts", JSON.stringify(state.workouts));
 
-  // 检查这条新记录是否刷新了 PR
-  checkAndCelebratePR(newWorkout);
+  if (editId) {
+    // 编辑模式：原地更新记录，保留 id
+    const idx = state.workouts.findIndex(w => w.id === editId);
+    if (idx !== -1) {
+      state.workouts[idx] = Object.assign({}, state.workouts[idx], { date: workoutDate, type: type, details: details, notes: notes });
+      localStorage.setItem("chocozap_workouts", JSON.stringify(state.workouts));
+      checkAndCelebratePR(state.workouts[idx]);
+    }
+  } else {
+    // 新增模式：构建单条 Workout 对象 (id 附加随机后缀，避免同一毫秒内连续打卡产生重复 id)
+    const newWorkout = {
+      id: "workout-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8),
+      date: workoutDate,
+      type: type,
+      details: details,
+      notes: notes
+    };
+    state.workouts.unshift(newWorkout);
+    localStorage.setItem("chocozap_workouts", JSON.stringify(state.workouts));
+    checkAndCelebratePR(newWorkout);
+  }
 
-  // 重置表单备注
-  document.getElementById("input-notes").value = "";
-  
-  // 提示打卡成功 (iOS 震动微动效)
-  const submitBtn = document.querySelector(".btn-submit-workout");
-  const originalText = submitBtn.innerHTML;
-  submitBtn.innerHTML = "🎉 打卡成功！";
-  submitBtn.style.background = "linear-gradient(135deg, #39ff14, #00f0ff)";
-  
-  // 如果配置了 GitHub Token，进行一次静默云同步，把新记录推上云端
   if (state.settings.githubToken) {
     syncWithGithub(true);
   }
 
+  onWorkoutSaved(editId ? "✅ 修改已保存！" : "🎉 打卡成功！", !!editId);
+}
+
+// 打卡/编辑成功后的统一收尾：提示成功；新增打卡停留在打卡页返回项目网格（方便连续打卡），
+// 编辑则回到历史页查看结果
+function onWorkoutSaved(text, isEdit) {
+  const submitBtn = document.querySelector(".btn-submit-workout");
+  if (submitBtn) {
+    const originalHtml = submitBtn.innerHTML;
+    submitBtn.innerHTML = text;
+    submitBtn.style.background = "linear-gradient(135deg, #39ff14, #00f0ff)";
+    setTimeout(() => {
+      submitBtn.innerHTML = originalHtml;
+      submitBtn.style.background = "";
+    }, 1000);
+  }
+
+  updateStats();
+  renderHistory();
+
   setTimeout(() => {
-    submitBtn.innerHTML = originalText;
-    submitBtn.style.background = "";
-    // 跳转至历史页签——但如果用户在这 1.2 秒内已经手动切到了别的页签(比如连续打卡下一个项目)，
-    // 就不要把他们硬拽回历史页，尊重用户当前所在的位置
-    const stillOnLogTab = document.getElementById("view-log").classList.contains("active");
-    if (stillOnLogTab) {
+    if (isEdit) {
       switchTab('history');
+    } else {
+      // 打卡后不跳历史，回到项目选择界面，方便继续给下一个项目打卡
+      document.getElementById("input-edit-id").value = "";
+      renderLogProjectGrid();
+      showLogSelectStage();
     }
-  }, 1200);
+  }, 900);
+}
+
+// 保存身体数据（体重/臂围/腰围/胸围）——独立存储 chocozap_measurements
+function saveBodyMetrics(date, editId) {
+  const num = id => {
+    const v = document.getElementById(id).value;
+    return v === '' ? null : (Math.round(parseFloat(v) * 10) / 10);
+  };
+  const weight = num('input-bm-weight');
+  const arm = num('input-bm-arm');
+  const waist = num('input-bm-waist');
+  const chest = num('input-bm-chest');
+
+  if (weight == null && arm == null && waist == null && chest == null) {
+    alert("请至少填写一项身体数据！");
+    return;
+  }
+
+  const record = { date: date, weight: weight, arm: arm, waist: waist, chest: chest };
+
+  if (editId) {
+    const idx = state.measurements.findIndex(m => m.id === editId);
+    if (idx !== -1) state.measurements[idx] = Object.assign({}, state.measurements[idx], record);
+  } else {
+    record.id = "bm-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6);
+    state.measurements.push(record);
+  }
+  // 按日期从新到旧排序，方便"最近一次"读取
+  state.measurements.sort((a, b) => new Date(b.date) - new Date(a.date));
+  localStorage.setItem("chocozap_measurements", JSON.stringify(state.measurements));
+
+  // 同步更新设置里的体重（用于跑步机热量估算）
+  if (weight != null) {
+    state.settings.weight = weight;
+    localStorage.setItem("chocozap_settings", JSON.stringify(state.settings));
+    syncSettingsUI();
+  }
+
+  onWorkoutSaved(editId ? "✅ 身体数据已更新！" : "📏 身体数据已记录！", false);
+}
+
+// 从趋势页编辑一条身体数据
+function editMeasurement(id) {
+  const m = state.measurements.find(x => x.id === id);
+  if (!m) return;
+  switchTab('log');
+  openLogForm('body_metrics', { id: m.id, date: m.date, details: { weight: m.weight, arm: m.arm, waist: m.waist, chest: m.chest } });
+}
+
+// 删除一条身体数据
+function deleteMeasurement(id) {
+  if (!confirm("确定删除这条身体数据吗？")) return;
+  state.measurements = state.measurements.filter(m => m.id !== id);
+  localStorage.setItem("chocozap_measurements", JSON.stringify(state.measurements));
+  renderBodyMetrics();
 }
 
 // 删除某条打卡记录
@@ -759,65 +1349,14 @@ function deleteWorkout(id) {
 // 5. 统计与仪表盘数据展示 (Dashboard & Streak)
 // ==========================================================================
 function updateStats() {
-  const workouts = state.workouts;
-  
-  // A. 累计打卡次数
-  document.getElementById("stat-total-days").textContent = workouts.length;
-  
-  // B. 连续打卡天数 (Streak 算法)
-  // 获取所有独立发生锻炼的日期
-  const workoutDates = [...new Set(workouts.map(w => w.date))].sort((a, b) => new Date(b) - new Date(a));
-  
-  let streak = 0;
-  const todayStr = getLocalDateString();
-  const yesterdayStr = getPastDateString(1);
-
-  if (workoutDates.length > 0) {
-    const newestDate = workoutDates[0];
-
-    // 如果最新打卡日期既不是今天也不是昨天，说明连续已经断了
-    if (newestDate === todayStr || newestDate === yesterdayStr) {
-      streak = 1;
-      let checkDate = parseLocalDate(newestDate);
-
-      for (let i = 1; i < workoutDates.length; i++) {
-        // 前一天
-        checkDate.setDate(checkDate.getDate() - 1);
-        const expectedDateStr = getLocalDateString(checkDate);
-        
-        if (workoutDates[i] === expectedDateStr) {
-          streak++;
-        } else {
-          break; // 不连续了，停止
-        }
-      }
-    }
-  }
-  document.getElementById("stat-streak").innerHTML = `${streak} <small>天</small>`;
-  
-  // C. 今日完成目标环形进度
-  // 设定每日运动打卡的目标（例如 3 项运动）
-  const targetCount = 3;
-  const todayWorkouts = workouts.filter(w => w.date === todayStr);
-  const todayCount = todayWorkouts.length;
-  
-  document.getElementById("today-summary").textContent = `今天已打卡 ${todayCount} 项运动`;
-  
-  const percentage = Math.min(Math.round((todayCount / targetCount) * 100), 100);
-  document.getElementById("progress-percentage").textContent = `${percentage}%`;
-  
-  // 环形动画计算 (半径 40, 周长 2 * PI * 40 = 251.2)
-  const ring = document.querySelector(".progress-ring-bar");
-  if (ring) {
-    const strokeOffset = 251.2 - (percentage / 100) * 251.2;
-    ring.style.strokeDashoffset = strokeOffset;
-  }
-  
-  // D. 本周运动折线图绘制
+  // 本周运动折线图 + 力量/有氧趋势分析（首页已移除连续打卡/累计次数/今日目标进度模块）
   drawWeeklyChart();
-
-  // E. 力量/有氧趋势分析
   renderTrendAnalysis();
+}
+
+// 一条力量记录的总容量 Σ(重量×次数×组数)，兼容多重量组与旧扁平结构
+function strengthVolume(details) {
+  return getStrengthGroups(details).reduce((sum, g) => sum + (g.weight || 0) * (g.reps || 0) * (g.sets || 0), 0);
 }
 
 // 力量训练 vs 有氧训练的类型分类，供趋势分析和统计使用
@@ -873,8 +1412,8 @@ function renderTrendAnalysis() {
     if (diffDays < 0 || diffDays >= 28) return;
     const weekIdx = 3 - Math.floor(diffDays / 7);
 
-    if (STRENGTH_TYPES.includes(w.type) && w.details && w.details.weight) {
-      weekVolume[weekIdx] += (w.details.weight || 0) * (w.details.reps || 0) * (w.details.sets || 0);
+    if (WEIGHTED_STRENGTH.includes(w.type) && w.details) {
+      weekVolume[weekIdx] += strengthVolume(w.details);
     }
     if (w.type === 'treadmill' || w.type === 'spin_bike') {
       weekCardioMinutes[weekIdx] += (w.details.time || 0);
@@ -947,8 +1486,11 @@ const PR_TYPE_ICONS = {
 function getQualifyingPRValue(workout) {
   const d = workout.details || {};
   if (PR_WEIGHT_TYPES.includes(workout.type)) {
-    if (!d.sets || d.sets <= 1 || !d.weight) return null;
-    return { value: d.weight, unit: 'kg' };
+    // 多重量组：取"连续完成 2 组以上"的那些组里最大的重量作为 PR 候选
+    const qualifying = getStrengthGroups(d).filter(g => g.sets > 1 && g.weight > 0);
+    if (qualifying.length === 0) return null;
+    const maxWeight = Math.max.apply(null, qualifying.map(g => g.weight));
+    return { value: maxWeight, unit: 'kg' };
   }
   if (PR_DURATION_TYPES.includes(workout.type)) {
     if (!d.time) return null;
@@ -1014,9 +1556,76 @@ function showPRToast(message) {
 // 切换到"趋势"页签时统一刷新三个子模块
 function renderTrendsTab() {
   renderCalendarHeatmap();
+  renderBodyMetrics();
   renderRecoveryStatus();
   renderBodyPartStats();
   renderPersonalRecords();
+}
+
+// ---- 身体数据（体重/臂围/腰围/胸围）最新值 + 迷你趋势 ----
+function renderBodyMetrics() {
+  const container = document.getElementById("body-metrics-content");
+  if (!container) return;
+
+  const list = (state.measurements || []).slice().sort((a, b) => new Date(b.date) - new Date(a.date));
+  if (list.length === 0) {
+    container.innerHTML = `<div class="empty-state"><div class="empty-emoji">📏</div><p>还没有身体数据，去「打卡 → 身体数据」记录一次吧</p></div>`;
+    return;
+  }
+
+  const metrics = [
+    { key: 'weight', label: '体重', unit: 'kg' },
+    { key: 'arm', label: '臂围', unit: 'cm' },
+    { key: 'waist', label: '腰围', unit: 'cm' },
+    { key: 'chest', label: '胸围', unit: 'cm' }
+  ];
+
+  // 每项取最近一次的有效值，并计算与上一次有效值的差
+  const cards = metrics.map(m => {
+    const series = list.filter(x => x[m.key] != null);
+    if (series.length === 0) return '';
+    const latest = series[0];
+    const prev = series[1];
+    let delta = '';
+    if (prev) {
+      const diff = Math.round((latest[m.key] - prev[m.key]) * 10) / 10;
+      if (diff !== 0) {
+        const arrow = diff > 0 ? '▲' : '▼';
+        const cls = diff > 0 ? 'bm-up' : 'bm-down';
+        delta = `<span class="bm-delta ${cls}">${arrow} ${Math.abs(diff)}</span>`;
+      }
+    }
+    return `
+      <div class="bm-card">
+        <span class="bm-label">${m.label}</span>
+        <span class="bm-value">${latest[m.key]}<small>${m.unit}</small></span>
+        ${delta}
+      </div>
+    `;
+  }).join('');
+
+  // 最近记录列表（可编辑/删除）
+  const rows = list.slice(0, 6).map(m => {
+    const parts = [];
+    if (m.weight != null) parts.push(`${m.weight}kg`);
+    if (m.arm != null) parts.push(`臂${m.arm}`);
+    if (m.waist != null) parts.push(`腰${m.waist}`);
+    if (m.chest != null) parts.push(`胸${m.chest}`);
+    const p = m.date.split('-');
+    const dateLabel = `${parseInt(p[1])}月${parseInt(p[2])}日`;
+    return `
+      <div class="bm-row">
+        <span class="bm-row-date">${dateLabel}</span>
+        <span class="bm-row-vals">${parts.join(' · ')}</span>
+        <span class="bm-row-actions">
+          <button class="bm-row-btn" onclick="editMeasurement('${m.id}')" title="编辑">✎</button>
+          <button class="bm-row-btn" onclick="deleteMeasurement('${m.id}')" title="删除">✕</button>
+        </span>
+      </div>
+    `;
+  }).join('');
+
+  container.innerHTML = `<div class="bm-cards">${cards}</div><div class="bm-list">${rows}</div>`;
 }
 
 // ---- 打卡日历 (GitHub 贡献图风格，近53周) ----
@@ -1217,7 +1826,10 @@ function workoutFatigueFactor(w) {
     const t = d.time || 0;
     return t >= 30 ? 1.0 : t >= 15 ? 0.8 : 0.6;
   }
-  const sets = d.sets || 0;
+  // 力量：多重量组时按总组数衡量疲劳（各组组数相加）
+  const sets = WEIGHTED_STRENGTH.includes(w.type)
+    ? getStrengthGroups(d).reduce((s, g) => s + (g.sets || 0), 0)
+    : (d.sets || 0);
   return sets >= 3 ? 1.0 : sets === 2 ? 0.85 : 0.6;
 }
 
@@ -1283,7 +1895,7 @@ function renderRecoveryStatus() {
   if (sourceLabel) {
     if (hasAi && aiData.updatedAt) {
       const d = new Date(aiData.updatedAt);
-      sourceLabel.textContent = `Gemini 分析 · ${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      sourceLabel.textContent = `AI 分析 · ${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
     } else {
       sourceLabel.textContent = "按训练量与间隔实时估算";
     }
@@ -1466,6 +2078,78 @@ function drawWeeklyChart() {
 // ==========================================================================
 // 6. 渲染历史打卡记录 (Render History)
 // ==========================================================================
+// 历史卡片的图标与标题
+function historyMeta(item) {
+  const map = {
+    leg_press: { icon: '🦵', title: '腿举 (Leg Press)' },
+    shoulder_press: { icon: '💪', title: '肩推 (Shoulder Press)' },
+    chest_press: { icon: '🏋️', title: '胸推 (Chest Press)' },
+    preacher_curl: { icon: '🧘', title: '牧师椅 (Preacher Curl)' },
+    lat_pulldown: { icon: '🔽', title: '高位下拉 (Lat Pulldown)' },
+    situps: { icon: '🧗', title: '仰卧起坐 (Sit-ups)' },
+    spin_bike: { icon: '🚴', title: '动感单车 (Spin Bike)' },
+    massage_chair: { icon: '💆', title: '按摩椅' },
+    custom: { icon: '⚙️', title: item.details && item.details.name ? item.details.name : '自定义项目' }
+  };
+  if (item.type === 'treadmill') {
+    const t = item.details && item.details.variableSpeed ? '变速' : (item.details && item.details.mode === 'walk' ? '快走' : '慢跑');
+    return { icon: '🏃', title: `跑步机 (${t})` };
+  }
+  if (item.type === 'massage_chair') {
+    return { icon: '💆', title: `按摩椅 (${(item.details && item.details.mode) || '按摩'})` };
+  }
+  return map[item.type] || { icon: '⚙️', title: '健身运动' };
+}
+
+// 变速有氧的分段文字摘要
+function formatVariableSummary(d, unit) {
+  const parts = [];
+  if (d.warmup && d.warmup.duration > 0) parts.push(`热身 ${d.warmup.speed}${unit}×${d.warmup.duration}分`);
+  (d.segments || []).forEach(s => { if (s.duration > 0) parts.push(`${s.speed}${unit}×${s.duration}分`); });
+  if (d.sprint && d.sprint.duration > 0) parts.push(`冲刺 ${d.sprint.speed}${unit}×${d.sprint.duration}分`);
+  return parts.join(' → ');
+}
+
+// 历史卡片的数据摘要文字
+function historyStatsText(item) {
+  const d = item.details || {};
+  if (WEIGHTED_STRENGTH.includes(item.type)) {
+    const groups = getStrengthGroups(d);
+    return groups.map(g => `${g.weight}kg × ${g.reps}次 × ${g.sets}组` + (g.extraReps ? ` (+组外${g.extraReps}次)` : "")).join(' ／ ');
+  }
+  if (item.type === 'situps') {
+    return `${d.reps}次 × ${d.sets}组` + (d.extraReps ? ` (+组外${d.extraReps}次)` : "");
+  }
+  if (item.type === 'spin_bike') {
+    if (d.variableSpeed) {
+      return `变速骑行 ${d.time}分钟 | ${formatVariableSummary(d, '档')}`;
+    }
+    return `阻力 ${d.resistance}档 | 骑行 ${d.time}分钟`;
+  }
+  if (item.type === 'treadmill') {
+    if (d.variableSpeed) {
+      return `变速 ${d.time}分钟 | 坡度 ${d.incline || 0}% | ${d.distance}km | 约 ${d.calories}kcal｜${formatVariableSummary(d, 'km/h')}`;
+    }
+    return `${d.time}分钟 | 速度 ${d.speed}km/h | 坡度 ${d.incline}% | ${d.distance}km | 约 ${d.calories}kcal`;
+  }
+  if (item.type === 'massage_chair') {
+    const intensityMap = { 1: '弱', 2: '中', 3: '强' };
+    return `时长 ${d.duration}分钟 | 力度：${intensityMap[d.intensity] || '中'}`;
+  }
+  if (item.type === 'custom') {
+    return `${d.value || ''}` + (d.sets ? ` × ${d.sets}组` : "");
+  }
+  return "";
+}
+
+// 从历史进入编辑：切到打卡页，用原记录填充参数界面
+function editWorkout(id) {
+  const w = state.workouts.find(x => x.id === id);
+  if (!w) return;
+  switchTab('log');
+  openLogForm(w.type, w);
+}
+
 function renderHistory() {
   const container = document.getElementById("history-list-container");
   if (!container) return;
@@ -1523,64 +2207,11 @@ function renderHistory() {
     `;
     
     groups[dateStr].forEach(item => {
-      let icon = "⚙️";
-      let title = "健身运动";
-      let stats = "";
-      
-      switch(item.type) {
-        case 'leg_press':
-          icon = "🦵";
-          title = "腿举 (Leg Press)";
-          stats = `${item.details.weight}kg × ${item.details.reps}次 × ${item.details.sets}组` + (item.details.extraReps ? ` (+组外${item.details.extraReps}次)` : "");
-          break;
-        case 'shoulder_press':
-          icon = "💪";
-          title = "肩推 (Shoulder Press)";
-          stats = `${item.details.weight}kg × ${item.details.reps}次 × ${item.details.sets}组` + (item.details.extraReps ? ` (+组外${item.details.extraReps}次)` : "");
-          break;
-        case 'chest_press':
-          icon = "🏋️";
-          title = "胸推 (Chest Press)";
-          stats = `${item.details.weight}kg × ${item.details.reps}次 × ${item.details.sets}组` + (item.details.extraReps ? ` (+组外${item.details.extraReps}次)` : "");
-          break;
-        case 'preacher_curl':
-          icon = "🧘";
-          title = "牧师椅 (Preacher Curl)";
-          stats = `${item.details.weight}kg × ${item.details.reps}次 × ${item.details.sets}组` + (item.details.extraReps ? ` (+组外${item.details.extraReps}次)` : "");
-          break;
-        case 'lat_pulldown':
-          icon = "🔽";
-          title = "高位下拉 (Lat Pulldown)";
-          stats = `${item.details.weight}kg × ${item.details.reps}次 × ${item.details.sets}组` + (item.details.extraReps ? ` (+组外${item.details.extraReps}次)` : "");
-          break;
-        case 'situps':
-          icon = "🧗";
-          title = "仰卧起坐 (Sit-ups)";
-          stats = `${item.details.reps}次 × ${item.details.sets}组` + (item.details.extraReps ? ` (+组外${item.details.extraReps}次)` : "");
-          break;
-        case 'spin_bike':
-          icon = "🚴";
-          title = "动感单车 (Spin Bike)";
-          stats = `阻力 ${item.details.resistance}档 | 骑行 ${item.details.time}分钟`;
-          break;
-        case 'treadmill':
-          icon = "🏃";
-          title = item.details.mode === "walk" ? "跑步机 (快走)" : "跑步机 (慢跑)";
-          stats = `${item.details.time}分钟 | 速度 ${item.details.speed}km/h | 坡度 ${item.details.incline}% | ${item.details.distance}km | 约 ${item.details.calories}kcal`;
-          break;
-        case 'massage_chair':
-          icon = "💆";
-          title = `按摩椅 (${item.details.mode})`;
-          const intensityMap = { 1: "弱", 2: "中", 3: "强" };
-          stats = `时长 ${item.details.duration}分钟 | 力度：${intensityMap[item.details.intensity] || "中"}`;
-          break;
-        case 'custom':
-          icon = "⚙️";
-          title = item.details.name || "自定义项目";
-          stats = `${item.details.value || ""}` + (item.details.sets ? ` × ${item.details.sets}组` : "");
-          break;
-      }
-      
+      const meta = historyMeta(item);
+      const icon = meta.icon;
+      const title = meta.title;
+      const stats = historyStatsText(item);
+
       html += `
         <div class="glass history-item-card">
           <div class="history-item-left">
@@ -1592,6 +2223,9 @@ function renderHistory() {
             </div>
           </div>
           <div class="history-item-right">
+            <button class="edit-btn" onclick="editWorkout('${item.id}')" title="编辑记录">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+            </button>
             <button class="delete-btn" onclick="deleteWorkout('${item.id}')" title="删除记录">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
             </button>
@@ -1611,6 +2245,18 @@ function renderHistory() {
 // ==========================================================================
 
 // 将健身数据打包转换为面向大语言模型的精美 Markdown 提示词 (免 Key/直连通用)
+// 把最近一次身体数据（体重/臂围/腰围/胸围）拼成一行，供 AI 参考
+function buildBodyMetricsPromptLine() {
+  if (!state.measurements || state.measurements.length === 0) return "";
+  const m = state.measurements[0];
+  const parts = [];
+  if (m.arm != null) parts.push(`臂围 ${m.arm}cm`);
+  if (m.waist != null) parts.push(`腰围 ${m.waist}cm`);
+  if (m.chest != null) parts.push(`胸围 ${m.chest}cm`);
+  if (parts.length === 0) return "";
+  return `- 最近体测 (${m.date}): ${parts.join('，')}\n`;
+}
+
 function generateWorkoutSummaryPrompt() {
   const weight = state.settings.weight || 70;
   const recentWorkouts = state.workouts.slice(0, 30); // 提取最近 30 次记录
@@ -1626,9 +2272,11 @@ ${equipmentListStr}
 
 另外请注意：ChocoZAP 的力量训练器械（腿举、肩推、胸推、牧师椅、高位下拉）配重片只能以 5kg 为最小单位调整，不支持 2.5kg 这种半档，所以你给出的所有重量建议必须是 5 的整数倍（如 20kg、25kg、30kg），不要出现 2.5kg 的倍数。
 
+重要：本 App 的力量打卡支持"同一天同项目多重量组"，一条记录可以包含多个不同重量的组（例如高位下拉 25kg×12×3 组，再加 30kg×8×2 组）。请在给出训练菜单时，充分利用这种多重量组结构（比如金字塔递增/递减、递减组）。有氧（跑步机/单车）支持"变速"模式，可分为热身段、若干变速段（不同速度各自间隔时长）、冲刺段，请在需要时给出分段配速建议。
+
 【我的个人档案】
 - 体重: ${weight} kg
-
+${buildBodyMetricsPromptLine()}
 【我最近的健身打卡历史 (最新排在最前)】
 `;
 
@@ -1650,14 +2298,18 @@ ${equipmentListStr}
       }[w.type] || "其他";
 
       let detailsStr = "";
-      if (['leg_press', 'shoulder_press', 'chest_press', 'preacher_curl', 'lat_pulldown'].includes(w.type)) {
-        detailsStr = `${w.details.weight}kg x ${w.details.reps}次 x ${w.details.sets}组` + (w.details.extraReps ? ` + 组外${w.details.extraReps}次` : "");
+      if (WEIGHTED_STRENGTH.includes(w.type)) {
+        detailsStr = getStrengthGroups(w.details).map(g => `${g.weight}kg x ${g.reps}次 x ${g.sets}组` + (g.extraReps ? `(+组外${g.extraReps}次)` : "")).join("；");
       } else if (w.type === 'situps') {
         detailsStr = `${w.details.reps}次 x ${w.details.sets}组` + (w.details.extraReps ? ` + 组外${w.details.extraReps}次` : "");
       } else if (w.type === 'spin_bike') {
-        detailsStr = `阻力 ${w.details.resistance}档，骑行 ${w.details.time}分钟`;
+        detailsStr = w.details.variableSpeed
+          ? `变速骑行，总 ${w.details.time}分钟：${formatVariableSummary(w.details, '档')}`
+          : `阻力 ${w.details.resistance}档，骑行 ${w.details.time}分钟`;
       } else if (w.type === 'treadmill') {
-        detailsStr = `${w.details.mode === "walk" ? "快走" : "慢跑"}，时常 ${w.details.time}分钟，速度 ${w.details.speed}km/h，坡度 ${w.details.incline}%, 预估距离 ${w.details.distance}km, 预估消耗 ${w.details.calories}kcal`;
+        detailsStr = w.details.variableSpeed
+          ? `变速跑，总 ${w.details.time}分钟，坡度 ${w.details.incline || 0}%，预估距离 ${w.details.distance}km，预估消耗 ${w.details.calories}kcal：${formatVariableSummary(w.details, 'km/h')}`
+          : `${w.details.mode === "walk" ? "快走" : "慢跑"}，时长 ${w.details.time}分钟，速度 ${w.details.speed}km/h，坡度 ${w.details.incline}%, 预估距离 ${w.details.distance}km, 预估消耗 ${w.details.calories}kcal`;
       } else if (w.type === 'massage_chair') {
         detailsStr = `模式 [${w.details.mode}]，放松 ${w.details.duration}分钟，力度级别 ${w.details.intensity}`;
       } else if (w.type === 'custom') {
@@ -1684,20 +2336,22 @@ ${equipmentListStr}
 // 7.1 "Gemini的推荐" 首页模块：解析 AI 结构化训练计划、渲染、完成/拒绝
 // ==========================================================================
 
-// 只有直连 API 模式才能拿到可解析的回复，这里教会 Gemini 在"给出具体训练菜单推荐"时，
+// 只有直连 API 模式才能拿到可解析的回复，这里教会 AI 在"给出具体训练菜单推荐"时，
 // 在人类可读的回复末尾追加一段机器可读的 JSON 计划块，方便一键转为打卡记录
 function buildStructuredPlanInstruction() {
-  const typeSchemaStr = Object.keys(WORKOUT_REQUIRED_FIELDS)
-    .map(t => `  - "${t}": details 需要 ${WORKOUT_REQUIRED_FIELDS[t].join('、')} (均为数字，treadmill 的 mode 是 "walk" 或 "run" 字符串)`)
-    .join('\n');
-
   return `
 【结构化训练计划输出格式 —— 本次请求就是在向你要一份具体可执行的训练菜单，必须输出】
 请在你正常的、给人看的回复内容结束之后，另起一行，追加一个由 <!--CHOCOZAP_PLAN_START--> 和 <!--CHOCOZAP_PLAN_END--> 包裹的 JSON 数组，
 数组每一项代表一个推荐动作，格式为：
-{ "type": "器材英文标识", "label": "中文名称", "intensity": "给人看的强度描述文字，例如 50kg x 12次 x 3组", "details": { ...结构化数值字段 } }
-type 必须是以下英文标识之一，且 details 字段必须严格匹配对应的数值 schema：
-${typeSchemaStr}
+{ "type": "器材英文标识", "label": "中文名称", "intensity": "给人看的强度描述文字", "details": { ...结构化数值字段 } }
+type 必须是以下英文标识之一，details 字段必须严格匹配对应 schema：
+  - 力量项目 "leg_press" / "shoulder_press" / "chest_press" / "preacher_curl" / "lat_pulldown"：
+      details = { "groups": [ { "weight": 数字(必须为5的整数倍), "reps": 数字, "sets": 数字, "extraReps": 数字或0 }, ... ] }
+      （groups 数组支持"多重量组"——如需金字塔/递减组，就放多组不同 weight；只做一组也要用 groups 包一个元素）
+  - "situps"：details = { "reps": 数字, "sets": 数字, "extraReps": 数字或0 }
+  - "spin_bike"：details = { "resistance": 数字1-24, "time": 分钟数 }
+  - "treadmill"：details = { "mode": "walk" 或 "run", "speed": km/h数字, "incline": 坡度数字, "time": 分钟数 }
+  - "massage_chair"：details = { "mode": 字符串, "duration": 分钟数, "intensity": 1/2/3 }
 如果推荐的动作不在上述器材范围内，type 请填 "custom"，details 填 { "name": "动作名称", "value": "关键数据文字", "sets": 组数或null }。
 这段 JSON 是给 App 自动解析用的，不需要在正文里重复解释它，也不要用 Markdown 代码块包裹，直接是纯 JSON 数组文本，且这次务必要输出。`;
 }
@@ -1847,8 +2501,11 @@ let adjustingRecId = null;
 // 力量类项目 (含重量) 统一走这一套字段；ChocoZAP 配重只能以 5kg 为单位，
 // 所以这里的步进器只给 ±5，不提供 ±1，从 UI 层面就避免调出不合法的重量
 function buildStrengthAdjustFields(d) {
-  const weight = roundToNearestStep(d.weight, WEIGHT_STEP_KG) || WEIGHT_STEP_KG;
+  // 兼容多重量组：调整对话框以第一组为基准编辑（落地时按单组处理）
+  const g0 = getStrengthGroups(d)[0] || { weight: WEIGHT_STEP_KG, reps: 12, sets: 3, extraReps: 0 };
+  const weight = roundToNearestStep(g0.weight, WEIGHT_STEP_KG) || WEIGHT_STEP_KG;
   return `
+    ${(getStrengthGroups(d).length > 1) ? '<p class="settings-desc" style="margin-bottom:8px;">该推荐含多个重量组，这里以首组为准调整；如需保留多组请直接「完成」后在历史里编辑。</p>' : ''}
     <div class="form-row">
       <label>重量 (kg) <small>—— ChocoZAP 器械以 5kg 为单位调整</small></label>
       <div class="stepper-input">
@@ -1862,7 +2519,7 @@ function buildStrengthAdjustFields(d) {
         <label>每组次数</label>
         <div class="stepper-input">
           <button type="button" class="step-btn decrease" onclick="adjustValue('adjust-reps', -1)">-</button>
-          <input type="number" id="adjust-reps" value="${d.reps || 12}" min="1" max="100">
+          <input type="number" id="adjust-reps" value="${g0.reps || 12}" min="1" max="100">
           <button type="button" class="step-btn increase" onclick="adjustValue('adjust-reps', 1)">+</button>
         </div>
       </div>
@@ -1870,7 +2527,7 @@ function buildStrengthAdjustFields(d) {
         <label>组数</label>
         <div class="stepper-input">
           <button type="button" class="step-btn decrease" onclick="adjustValue('adjust-sets', -1)">-</button>
-          <input type="number" id="adjust-sets" value="${d.sets || 3}" min="1" max="20">
+          <input type="number" id="adjust-sets" value="${g0.sets || 3}" min="1" max="20">
           <button type="button" class="step-btn increase" onclick="adjustValue('adjust-sets', 1)">+</button>
         </div>
       </div>
@@ -2129,8 +2786,18 @@ function acceptAiRecommendation(id) {
   let type = knownTypes.includes(rec.type) ? rec.type : 'custom';
   let details = rec.details && typeof rec.details === 'object' ? { ...rec.details } : null;
 
-  // 校验必填字段是否齐全，任一缺失就降级为 custom 类型，只保留强度文字，绝不编造数值
-  if (type !== 'custom') {
+  // 力量项目：兼容 AI 给出 groups 数组或旧的扁平 weight/reps/sets；重量强制取整到 5kg
+  if (WEIGHTED_STRENGTH.includes(type)) {
+    const groups = getStrengthGroups(details || {})
+      .filter(g => g.reps > 0 && g.sets > 0)
+      .map(g => ({ weight: roundToNearestStep(g.weight, WEIGHT_STEP_KG), reps: g.reps, sets: g.sets, extraReps: g.extraReps || 0 }));
+    if (groups.length === 0) {
+      type = 'custom';
+    } else {
+      details = { groups: groups };
+    }
+  } else if (type !== 'custom') {
+    // 其他已知类型：校验必填数值字段
     const requiredFields = WORKOUT_REQUIRED_FIELDS[type];
     const valid = details && requiredFields.every(f => details[f] !== undefined && details[f] !== null && details[f] !== '');
     if (!valid) type = 'custom';
@@ -2142,10 +2809,6 @@ function acceptAiRecommendation(id) {
       value: rec.intensity || '',
       sets: (details && details.sets) || null
     };
-  } else if (WORKOUT_REQUIRED_FIELDS[type].includes('weight')) {
-    // ChocoZAP 的力量器械配重只能以 5kg 为单位调整，即使 AI 没听话给出了 2.5kg 的半档，
-    // 落地成打卡记录前也要强制取整，避免生成一条现实中根本调不出来的重量
-    details.weight = roundToNearestStep(details.weight, WEIGHT_STEP_KG);
   } else if (type === 'treadmill') {
     // 距离/卡路里统一由 App 按同一套公式计算，不采信 AI 自行估算的数值，保证口径一致
     const est = computeTreadmillEstimate(details.mode, details.speed, details.incline, details.time);
@@ -2158,7 +2821,7 @@ function acceptAiRecommendation(id) {
     date: getLocalDateString(),
     type: type,
     details: details,
-    notes: "来自 Gemini 推荐" + (rec.intensity ? `：${rec.intensity}` : "")
+    notes: "来自 " + getAiCoachName() + " 推荐" + (rec.intensity ? `：${rec.intensity}` : "")
   };
 
   state.workouts.unshift(newWorkout);
@@ -2262,7 +2925,7 @@ const AI_MODES = {
     label: '📋 训练菜单',
     placeholder: "描述你的需求，如：'今天想练腿和核心，时间只有40分钟'",
     quickAction: '一键生成今日菜单',
-    welcome: `这里是**训练菜单模式**。直接告诉我你今天的目标、状态或时间限制，我会给出一份具体可执行的训练菜单，并自动推送到主页的「Gemini的推荐」模块，可以一键打卡。
+    welcome: `这里是**训练菜单模式**。直接告诉我你今天的目标、状态或时间限制，我会给出一份具体可执行的训练菜单，并自动推送到主页的「AI 教练推荐」模块，可以一键打卡。
 
 也可以点击下方「一键生成今日菜单」，我会根据你的训练历史和恢复状况直接安排。
 
@@ -2455,7 +3118,7 @@ function renderChatSessionMessages() {
   const session = state.chatSessions.find(s => s.id === state.activeChatSessionId);
   if (!session || session.messages.length === 0) {
     const conf = AI_MODES[currentAiMode || (session ? getSessionMode(session) : 'chat')] || AI_MODES.chat;
-    appendMessage("ai", "Gemini Coach", conf.welcome, false, false);
+    appendMessage("ai", getAiCoachName(), conf.welcome, false, false);
     return;
   }
   session.messages.forEach(m => {
@@ -2470,49 +3133,115 @@ async function sendChatMessage() {
   if (!userText) return;
   chatInput.value = "";
 
-  await callGeminiCoach(userText, { mode: currentAiMode || 'chat' });
+  await callAiCoach(userText, { mode: currentAiMode || 'chat' });
 }
 
 // "一键生成今日菜单"：训练菜单模式的快捷入口
 async function requestTrainingPlan() {
-  if (!state.settings.apiKey) {
-    alert('生成训练菜单需要先在"设置"页配置 Gemini API Key（免 Key 的"打包健身数据"模式无法自动生成推荐列表，只能手动复制文字）。');
+  if (!getActiveApiKey()) {
+    alert(`生成训练菜单需要先在"设置"页配置 ${AI_PROVIDERS[getAiProvider()].keyLabel}（免 Key 的"打包健身数据"模式无法自动生成推荐列表，只能手动复制文字）。`);
     switchTab('settings');
     return;
   }
 
   const userText = "请帮我安排一份今天可以在 ChocoZAP 完成的具体训练菜单，包含项目、重量、组数等可执行的强度安排。";
-  await callGeminiCoach(userText, { mode: 'menu' });
+  await callAiCoach(userText, { mode: 'menu' });
 }
 
 // "一键分析恢复状况"：身体分析模式的快捷入口
 async function requestBodyAnalysis() {
-  if (!state.settings.apiKey) {
-    alert('身体分析需要先在"设置"页配置 Gemini API Key。');
+  if (!getActiveApiKey()) {
+    alert(`身体分析需要先在"设置"页配置 ${AI_PROVIDERS[getAiProvider()].keyLabel}。`);
     switchTab('settings');
     return;
   }
 
   const userText = "请基于我的打卡数据，分析各身体部位的训练量分布和当前的疲劳恢复状况，并把结构化结果推送给 App。";
-  await callGeminiCoach(userText, { mode: 'analysis' });
+  await callAiCoach(userText, { mode: 'analysis' });
 }
 
-// 三种模式共用的请求逻辑：发消息、带上下文调用 Gemini、渲染回复、按模式解析结构化数据
-async function callGeminiCoach(userText, { mode }) {
-  const apiKey = state.settings.apiKey;
-  const model = state.settings.apiModel || 'gemini-2.5-flash';
+// 取当前提供方对应的 API Key
+function getActiveApiKey() {
+  const provider = getAiProvider();
+  return (state.settings.apiKeys && state.settings.apiKeys[provider]) || state.settings.apiKey || '';
+}
+
+// 直连 Anthropic Claude Messages API（浏览器端直连需带 anthropic-dangerous-direct-browser-access 头）
+async function requestClaude(model, systemPromptText, messages, mode) {
+  const claudeMessages = messages.map(m => ({
+    role: m.role === 'user' ? 'user' : 'assistant',
+    content: m.text
+  }));
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": getActiveApiKey(),
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true"
+    },
+    body: JSON.stringify({
+      model: model,
+      max_tokens: 4096,
+      system: systemPromptText,
+      messages: claudeMessages
+    })
+  });
+  const data = await response.json();
+  if (!response.ok || data.type === 'error') {
+    const msg = (data.error && data.error.message) || "请求 Claude 失败，请检查 API Key 是否有效。";
+    throw new Error(msg);
+  }
+  if (data.stop_reason === 'refusal') {
+    throw new Error("Claude 出于安全策略拒绝了本次请求，请换一种问法。");
+  }
+  return (data.content || []).filter(b => b.type === 'text').map(b => b.text || "").join("");
+}
+
+// 直连 Google Gemini API
+async function requestGemini(model, systemPromptText, messages, mode) {
+  const conversationTurns = messages.map(m => ({
+    role: m.role === 'user' ? 'user' : 'model',
+    parts: [{ text: m.text }]
+  }));
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${getActiveApiKey()}`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: systemPromptText }] },
+      contents: conversationTurns,
+      // 分析模式用 temperature 0，保证同样的数据得到尽量一致的输出
+      generationConfig: { temperature: mode === 'analysis' ? 0 : 0.7 }
+    })
+  });
+  const data = await response.json();
+  if (!response.ok || !data.candidates || !data.candidates[0].content || !data.candidates[0].content.parts) {
+    const msg = data.error ? data.error.message : "请求 Gemini 失败，请检查 API Key 是否有效。";
+    throw new Error(msg);
+  }
+  return data.candidates[0].content.parts.map(part => part.text || "").join("");
+}
+
+// 三种模式共用的请求逻辑：发消息、带上下文调用 AI（Claude / Gemini）、渲染回复、按模式解析结构化数据
+async function callAiCoach(userText, { mode }) {
+  const provider = getAiProvider();
+  const conf = AI_PROVIDERS[provider];
+  const apiKey = getActiveApiKey();
+  const model = conf.models.some(m => m.id === state.settings.apiModel) ? state.settings.apiModel : conf.defaultModel;
+  const coachName = conf.coachName;
   const session = getActiveChatSession();
 
   // 1. 将用户的提问呈现在 UI 聊天框中，并计入当前会话历史
   appendMessage("user", "你", userText);
 
-  // 2. 检测 API Key 是否配置 (菜单/分析的快捷按钮已提前拦截；这里兜底处理手动输入的情况)
+  // 2. 检测 API Key 是否配置
   if (!apiKey) {
     setTimeout(() => {
-      appendMessage("ai", "Gemini Coach", `未检测到您的 API Key。
+      appendMessage("ai", coachName, `未检测到您的 ${conf.keyLabel}。
 
-我已经将您的最近健身打卡数据与刚才的提问打包。请切换到「聊天」模式点击“**打包健身数据**”按钮直接复制，在网页端 Gemini/ChatGPT 提问即可！
-当然，如果您希望在应用内获得直连的丝滑对话，可以在“设置”页面中输入您的 Gemini API Key。`);
+我已经将您的最近健身打卡数据与刚才的提问打包。请切换到「聊天」模式点击“**打包健身数据**”按钮直接复制，在任意 AI 网页端提问即可！
+当然，如果您希望在应用内获得直连的丝滑对话，可以在“设置”页面中输入您的 ${conf.keyLabel}。`);
     }, 600);
     return;
   }
@@ -2523,82 +3252,46 @@ async function callGeminiCoach(userText, { mode }) {
   if (mode === 'menu') systemPromptText += "\n" + buildStructuredPlanInstruction();
   if (mode === 'analysis') systemPromptText += "\n" + buildRecoveryAnalysisInstruction();
 
-  // 4. 把当前会话的历史消息转换为 Gemini 多轮对话格式，实现真正的"继续聊下去"
-  const conversationTurns = session.messages.map(m => ({
-    role: m.role === 'user' ? 'user' : 'model',
-    parts: [{ text: m.text }]
-  }));
+  // 4. 当前会话历史（真正的"继续聊下去"）
+  const history = session.messages.slice();
 
   // 5. 显示 AI 正在思考 (Typing...)
   const pendingText = mode === 'menu' ? "正在为你安排训练菜单，请稍候..."
     : mode === 'analysis' ? "正在分析你的训练分布与恢复状况，请稍候..."
     : "正在思考中，请稍候...";
-  const tempBubbleId = appendMessage("ai", "Gemini Coach", pendingText, true);
+  const tempBubbleId = appendMessage("ai", coachName, pendingText, true);
 
   try {
-    // Google Gemini API Beta 直连请求
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    const rawReplyText = provider === 'gemini'
+      ? await requestGemini(model, systemPromptText, history, mode)
+      : await requestClaude(model, systemPromptText, history, mode);
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: systemPromptText }] },
-        contents: conversationTurns,
-        // 分析模式用 temperature 0：相同的输入数据必须给出尽可能一致的输出，
-        // 防止"样本不变、结果一次一个样"
-        generationConfig: {
-          temperature: mode === 'analysis' ? 0 : 0.7
-        }
-      })
-    });
-
-    const data = await response.json();
-
-    // 移除正在思考的临时泡泡
     removeMessage(tempBubbleId);
+    let displayText = rawReplyText;
 
-    if (response.ok && data.candidates && data.candidates[0].content && data.candidates[0].content.parts) {
-      // 无损拼接所有 parts 的 text，防止多 part 返回时导致的话语中途截断
-      const rawReplyText = data.candidates[0].content.parts.map(part => part.text || "").join("");
-      let displayText = rawReplyText;
-
-      if (mode === 'menu') {
-        // 提取结构化训练计划，正文里不展示这段 JSON
-        const { cleanedText, items } = extractAiPlanFromReply(rawReplyText);
-        displayText = cleanedText;
-        if (items.length > 0) {
-          // 新一轮菜单会替换掉之前还没处理的旧推荐，而不是无限堆积
-          setAiRecommendations(items);
-          // 立即静默同步到云端，避免"电脑上刚生成的菜单，手机上还没看到"
-          if (state.settings.githubToken) syncWithGithub(true);
-          displayText += `\n\n✅ 已为你生成 ${items.length} 条训练推荐，可以在首页「Gemini的推荐」模块查看，点击完成会自动生成今天的打卡记录。`;
-        }
-      } else if (mode === 'analysis') {
-        // 提取结构化恢复分析，推送到趋势板块
-        const { cleanedText, recovery } = extractAiRecoveryFromReply(rawReplyText);
-        displayText = cleanedText;
-        if (recovery) {
-          applyAiRecoveryAnalysis(recovery);
-          displayText += `\n\n✅ 分析结果已推送到「趋势」板块的恢复进度模块。`;
-        }
-      } else {
-        // 聊天模式防御性清理：即使 AI 违反指令输出了结构块，也只清理展示、不落地数据
-        displayText = extractAiPlanFromReply(rawReplyText).cleanedText;
+    if (mode === 'menu') {
+      const { cleanedText, items } = extractAiPlanFromReply(rawReplyText);
+      displayText = cleanedText;
+      if (items.length > 0) {
+        setAiRecommendations(items);
+        if (state.settings.githubToken) syncWithGithub(true);
+        displayText += `\n\n✅ 已为你生成 ${items.length} 条训练推荐，可以在首页「AI 教练推荐」模块查看，点击完成会自动生成今天的打卡记录。`;
       }
-
-      appendMessage("ai", "Gemini Coach", displayText);
+    } else if (mode === 'analysis') {
+      const { cleanedText, recovery } = extractAiRecoveryFromReply(rawReplyText);
+      displayText = cleanedText;
+      if (recovery) {
+        applyAiRecoveryAnalysis(recovery);
+        displayText += `\n\n✅ 分析结果已推送到「趋势」板块的恢复进度模块。`;
+      }
     } else {
-      // 捕获 API 内部错误
-      const errorMsg = data.error ? data.error.message : "请求 Gemini 失败，请检查 API Key 是否有效。";
-      appendMessage("ai", "Gemini Coach", `❌ 发生错误：${errorMsg}`);
+      displayText = extractAiPlanFromReply(rawReplyText).cleanedText;
     }
 
+    appendMessage("ai", coachName, displayText);
   } catch (error) {
     removeMessage(tempBubbleId);
-    appendMessage("ai", "Gemini Coach", `❌ 网络请求失败，请确保本地可以连通 Google Gemini 接口 (部分地区可能需要科学上网)。错误详情: ${error.message}`);
+    appendMessage("ai", coachName, `❌ 发生错误：${error.message}`);
   }
 }
 
@@ -2673,21 +3366,69 @@ function formatChatMessageText(text) {
 // ==========================================================================
 // 8. 设置数据存取与备份 (Settings & Backup/Restore)
 // ==========================================================================
+// 把设置数据（提供方/模型下拉/Key/体重）同步到设置页 UI 控件
+function syncSettingsUI() {
+  const provider = getAiProvider();
+  const conf = AI_PROVIDERS[provider];
+
+  const weightInput = document.getElementById("setting-weight");
+  if (weightInput) weightInput.value = (Number(state.settings.weight) || 70).toFixed(1);
+
+  const providerSel = document.getElementById("setting-api-provider");
+  if (providerSel) providerSel.value = provider;
+
+  const keyLabel = document.getElementById("setting-api-key-label");
+  if (keyLabel) keyLabel.textContent = conf.keyLabel;
+
+  const keyInput = document.getElementById("setting-api-key");
+  if (keyInput) {
+    keyInput.placeholder = conf.keyPlaceholder;
+    keyInput.value = (state.settings.apiKeys && state.settings.apiKeys[provider]) || (provider === state.settings.apiProvider ? state.settings.apiKey : "") || "";
+  }
+
+  const modelSel = document.getElementById("setting-api-model");
+  if (modelSel) {
+    modelSel.innerHTML = conf.models.map(m => `<option value="${m.id}">${m.name}</option>`).join("");
+    const wanted = conf.models.some(m => m.id === state.settings.apiModel) ? state.settings.apiModel : conf.defaultModel;
+    modelSel.value = wanted;
+  }
+
+  const hint = document.getElementById("setting-api-hint");
+  if (hint) hint.innerHTML = conf.hint;
+}
+
+// 切换 AI 提供方：先切模型下拉与 Key 显示，默认选中该提供方的默认模型，再持久化
+function onProviderChange() {
+  const provider = document.getElementById("setting-api-provider").value || 'claude';
+  state.settings.apiProvider = provider;
+  // 切换后模型默认取该提供方默认模型（避免残留另一提供方的模型 id）
+  state.settings.apiModel = AI_PROVIDERS[provider].defaultModel;
+  syncSettingsUI();
+  saveSettings();
+}
+
 function saveSettings() {
-  const weight = parseFloat(document.getElementById("setting-weight").value) || 70;
+  const weight = Math.round((parseFloat(document.getElementById("setting-weight").value) || 70) * 10) / 10;
+  const apiProvider = document.getElementById("setting-api-provider").value || 'claude';
   const apiKey = document.getElementById("setting-api-key").value.trim();
   const apiModel = document.getElementById("setting-api-model").value;
   const githubToken = document.getElementById("setting-github-token").value.trim();
   const githubGistId = document.getElementById("setting-github-gist-id").value.trim();
-  
+
+  // 每个提供方各自保存一份 Key，切换提供方时不会互相覆盖
+  const apiKeys = Object.assign({}, state.settings.apiKeys);
+  apiKeys[apiProvider] = apiKey;
+
   state.settings = {
     weight: weight,
+    apiProvider: apiProvider,
     apiKey: apiKey,
+    apiKeys: apiKeys,
     apiModel: apiModel,
     githubToken: githubToken,
     githubGistId: githubGistId
   };
-  
+
   localStorage.setItem("chocozap_settings", JSON.stringify(state.settings));
 
   // 更新设置的同步文字
@@ -2708,14 +3449,16 @@ function saveSettings() {
 
 // 导出所有数据为 JSON 下载 (已剥离敏感凭据，备份文件可安全分享)
 function exportData() {
-  // 深度复制设置，并剔除敏感凭据：Gemini API Key 和 GitHub Token 都不能进备份文件
+  // 深度复制设置，并剔除敏感凭据：AI API Key 和 GitHub Token 都不能进备份文件
   const settingsToExport = { ...state.settings };
   delete settingsToExport.apiKey;
+  delete settingsToExport.apiKeys;
   delete settingsToExport.githubToken;
 
   const dataStr = JSON.stringify({
-    version: "1.1",
+    version: "1.2",
     workouts: state.workouts,
+    measurements: state.measurements,
     deleted: state.deletedIds,
     settings: settingsToExport
   }, null, 2);
@@ -2773,21 +3516,29 @@ function importData(event) {
         state.workouts = mergedList;
         localStorage.setItem("chocozap_workouts", JSON.stringify(state.workouts));
         
+        // 合并身体数据（按 id 去重，本地优先）
+        if (Array.isArray(data.measurements)) {
+          const mMap = new Map();
+          data.measurements.forEach(m => { if (m && m.id) mMap.set(m.id, m); });
+          (state.measurements || []).forEach(m => { if (m && m.id) mMap.set(m.id, m); });
+          state.measurements = Array.from(mMap.values()).sort((a, b) => new Date(b.date) - new Date(a.date));
+          localStorage.setItem("chocozap_measurements", JSON.stringify(state.measurements));
+        }
+
         if (data.settings) {
-          // 增量融合配置，保留本地已有的 API key
+          // 增量融合配置，保留本地已有的 API key（顶层与各提供方 apiKeys 都不覆盖）
+          const keepKey = state.settings.apiKey;
+          const keepKeys = state.settings.apiKeys;
           state.settings = {
             ...state.settings,
             ...data.settings,
-            apiKey: state.settings.apiKey // 强行保留本地已配置的 Key
+            apiKey: keepKey,
+            apiKeys: keepKeys
           };
           localStorage.setItem("chocozap_settings", JSON.stringify(state.settings));
-          
-          // 更新设置界面
-          document.getElementById("setting-weight").value = state.settings.weight;
-          document.getElementById("setting-api-key").value = state.settings.apiKey || "";
-          document.getElementById("setting-api-model").value = state.settings.apiModel || 'gemini-2.5-flash';
+          syncSettingsUI();
         }
-        
+
         alert("🎉 数据合并导入成功！电脑与手机的数据已完美融合。");
         // 刷新
         updateStats();
@@ -2875,9 +3626,10 @@ async function resetDatabase() {
     }
   }
 
-  // 3. 清空本地历史/推荐并保存墓碑，保持 has_run_before 状态，防止重新加载时写入 mock 数据
+  // 3. 清空本地历史/推荐/身体数据并保存墓碑，保持 has_run_before 状态，防止重新加载时写入 mock 数据
   localStorage.setItem("chocozap_workouts", JSON.stringify([]));
   localStorage.setItem("chocozap_ai_recommendations", JSON.stringify([]));
+  localStorage.setItem("chocozap_measurements", JSON.stringify([]));
   localStorage.setItem("chocozap_deleted", JSON.stringify(tombstones));
   localStorage.setItem("chocozap_has_run_before", "true");
 

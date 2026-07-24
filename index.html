@@ -17,7 +17,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Noto+Sans+SC:wght@300;400;500;700;900&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=1.4.0">
+  <link rel="stylesheet" href="style.css?v=1.5.0">
 </head>
 <body>
   <!-- 动态流体液体背景 -->
@@ -50,55 +50,10 @@
         <div class="welcome-section">
           <h2>你好，健身达人 👋</h2>
           <p>今天也是充满活力的一天，开始打卡吧！</p>
-        </div>
-
-        <!-- 统计概览卡片 -->
-        <div class="stats-row">
-          <div class="stat-card glass">
-            <div class="stat-icon streak-icon">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
-            </div>
-            <div class="stat-info">
-              <span class="stat-label">连续打卡</span>
-              <span class="stat-value" id="stat-streak">0 <small>天</small></span>
-            </div>
-          </div>
-          <div class="stat-card glass">
-            <div class="stat-icon count-icon">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-            </div>
-            <div class="stat-info">
-              <span class="stat-label">累计健身</span>
-              <span class="stat-value" id="stat-total-days">0 <small>次</small></span>
-            </div>
-          </div>
-        </div>
-
-        <!-- 今日完成度环形进度 -->
-        <div class="glass today-progress-card">
-          <div class="progress-left">
-            <h3>今日目标进度</h3>
-            <p id="today-summary">今天已打卡 0 项运动</p>
-            <button class="btn btn-primary btn-sm start-workout-btn" onclick="switchTab('log')">
-              立即打卡
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-            </button>
-          </div>
-          <div class="progress-right">
-            <div class="circular-progress">
-              <svg class="progress-ring" width="100" height="100">
-                <circle class="progress-ring-bg" stroke="rgba(255,255,255,0.06)" stroke-width="8" fill="transparent" r="40" cx="50" cy="50"/>
-                <circle class="progress-ring-bar" stroke="url(#progress-gradient)" stroke-width="8" stroke-linecap="round" fill="transparent" r="40" cx="50" cy="50" stroke-dasharray="251.2" stroke-dashoffset="251.2"/>
-                <defs>
-                  <linearGradient id="progress-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" stop-color="#ffd000" />
-                    <stop offset="100%" stop-color="#ff7300" />
-                  </linearGradient>
-                </defs>
-              </svg>
-              <div class="progress-text" id="progress-percentage">0%</div>
-            </div>
-          </div>
+          <button class="btn btn-primary btn-sm start-workout-btn welcome-cta" onclick="switchTab('log')">
+            立即打卡
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          </button>
         </div>
 
         <!-- 本周运动走势折线图 -->
@@ -140,10 +95,10 @@
           </div>
         </div>
 
-        <!-- Gemini 训练推荐 (只有存在待处理推荐时才显示) -->
+        <!-- AI 训练推荐 (只有存在待处理推荐时才显示) -->
         <div class="glass ai-recommendation-card" id="ai-recommendation-section" style="display: none;">
           <div class="chart-header">
-            <h3>Gemini的推荐</h3>
+            <h3>AI 教练推荐</h3>
             <span class="chart-subtitle">来自 AI 教练的训练建议</span>
           </div>
           <div class="ai-rec-list" id="ai-recommendation-list"></div>
@@ -192,328 +147,52 @@
 
       <!-- TAB 2: 打卡记录表单 -->
       <section id="view-log" class="app-view">
-        <div class="view-header">
-          <h2>新增健身打卡</h2>
-          <p>选择你要记录的运动项目</p>
-        </div>
-
-        <!-- 器材/项目选择网格 -->
-        <div class="exercise-selector-grid">
-          <div class="exercise-pill" data-type="leg_press">
-            <span class="ex-icon">🦵</span>
-            <span class="ex-name">腿举</span>
+        <!-- 项目选择页：卡片铺满整个界面 -->
+        <div id="log-select-stage">
+          <div class="view-header">
+            <h2>新增健身打卡</h2>
+            <p>选择你要记录的运动项目</p>
           </div>
-          <div class="exercise-pill" data-type="shoulder_press">
-            <span class="ex-icon">💪</span>
-            <span class="ex-name">肩推</span>
-          </div>
-          <div class="exercise-pill" data-type="chest_press">
-            <span class="ex-icon">🏋️</span>
-            <span class="ex-name">胸推</span>
-          </div>
-          <div class="exercise-pill" data-type="preacher_curl">
-            <span class="ex-icon">🧘</span>
-            <span class="ex-name">牧师椅</span>
-          </div>
-          <div class="exercise-pill" data-type="lat_pulldown">
-            <span class="ex-icon">🔽</span>
-            <span class="ex-name">高位下拉</span>
-          </div>
-          <div class="exercise-pill" data-type="spin_bike">
-            <span class="ex-icon">🚴</span>
-            <span class="ex-name">动感单车</span>
-          </div>
-          <div class="exercise-pill" data-type="treadmill">
-            <span class="ex-icon">🏃</span>
-            <span class="ex-name">跑步机</span>
-          </div>
-          <div class="exercise-pill" data-type="situps">
-            <span class="ex-icon">🧗</span>
-            <span class="ex-name">仰卧起坐</span>
-          </div>
-          <div class="exercise-pill" data-type="massage_chair">
-            <span class="ex-icon">💆</span>
-            <span class="ex-name">按摩椅</span>
-          </div>
-          <div class="exercise-pill" data-type="custom">
-            <span class="ex-icon">⚙️</span>
-            <span class="ex-name">自定义</span>
+          <div class="log-project-grid" id="log-project-grid">
+            <!-- 由 JS 渲染项目卡片 -->
           </div>
         </div>
 
-        <!-- 动态表单卡片 -->
-        <div class="glass form-card" id="form-container" style="display: none;">
-          <div class="form-card-header">
-            <h3 id="form-title">运动项目</h3>
-            <span class="form-badge" id="form-badge-type">力量训练</span>
+        <!-- 参数页：选中项目后铺满整个界面进行打卡 -->
+        <div id="log-form-stage" style="display: none;">
+          <button type="button" class="log-back-btn" onclick="closeLogForm()">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            返回项目
+          </button>
+          <div class="glass form-card">
+            <div class="form-card-header">
+              <h3 id="form-title">运动项目</h3>
+              <span class="form-badge" id="form-badge-type">力量训练</span>
+            </div>
+            <form id="workout-form" onsubmit="saveWorkout(event)">
+              <input type="hidden" id="input-exercise-type">
+              <input type="hidden" id="input-edit-id">
+              <!-- 类型专属字段由 JS 动态渲染 -->
+              <div id="log-form-fields"></div>
+
+              <!-- 打卡日期 (支持补记过去漏打的卡) -->
+              <div class="form-row">
+                <label>打卡日期 <small>—— 默认今天，也可以选过去的日期补记</small></label>
+                <input type="date" id="input-workout-date" class="glass-input">
+              </div>
+
+              <!-- 通用备注 -->
+              <div class="form-row">
+                <label>运动备注 / 心得</label>
+                <textarea id="input-notes" placeholder="添加备注，如 '今天感觉轻松' 或者是器材编号" class="glass-textarea" rows="2"></textarea>
+              </div>
+
+              <button type="submit" class="btn btn-submit-workout btn-glowing-glow">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                <span id="log-submit-label">保存本次打卡</span>
+              </button>
+            </form>
           </div>
-
-          <form id="workout-form" onsubmit="saveWorkout(event)">
-            <!-- 隐藏域 -->
-            <input type="hidden" id="input-exercise-type">
-
-            <!-- 力量训练专属表单组 (腿举、肩推、胸推、牧师椅) -->
-            <div class="form-group-set" id="group-strength">
-              <div class="form-row">
-                <label>重量 (kg)</label>
-                <div class="stepper-input">
-                  <button type="button" class="step-btn decrease-large" onclick="adjustValue('input-weight', -5)">-5</button>
-                  <button type="button" class="step-btn decrease" onclick="adjustValue('input-weight', -1)">-</button>
-                  <input type="number" id="input-weight" value="40" min="0" max="300" step="1">
-                  <button type="button" class="step-btn increase" onclick="adjustValue('input-weight', 1)">+</button>
-                  <button type="button" class="step-btn increase-large" onclick="adjustValue('input-weight', 5)">+5</button>
-                </div>
-                <!-- 预设快捷重量 -->
-                <div class="quick-presets">
-                  <button type="button" class="preset-tag" onclick="setPreset('input-weight', 20)">20k</button>
-                  <button type="button" class="preset-tag" onclick="setPreset('input-weight', 40)">40k</button>
-                  <button type="button" class="preset-tag" onclick="setPreset('input-weight', 60)">60k</button>
-                  <button type="button" class="preset-tag" onclick="setPreset('input-weight', 80)">80k</button>
-                  <button type="button" class="preset-tag" onclick="setPreset('input-weight', 100)">100k</button>
-                </div>
-              </div>
-
-              <div class="form-row-grid">
-                <div class="form-row">
-                  <label>每组次数</label>
-                  <div class="stepper-input">
-                    <button type="button" class="step-btn decrease" onclick="adjustValue('input-reps', -1)">-</button>
-                    <input type="number" id="input-reps" value="12" min="1" max="100">
-                    <button type="button" class="step-btn increase" onclick="adjustValue('input-reps', 1)">+</button>
-                  </div>
-                </div>
-                <div class="form-row">
-                  <label>组数</label>
-                  <div class="stepper-input">
-                    <button type="button" class="step-btn decrease" onclick="adjustValue('input-sets', -1)">-</button>
-                    <input type="number" id="input-sets" value="3" min="1" max="20">
-                    <button type="button" class="step-btn increase" onclick="adjustValue('input-sets', 1)">+</button>
-                  </div>
-                  <!-- 预设快捷组数 -->
-                  <div class="quick-presets">
-                    <button type="button" class="preset-tag" onclick="setPreset('input-sets', 1)">1组</button>
-                    <button type="button" class="preset-tag" onclick="setPreset('input-sets', 2)">2组</button>
-                    <button type="button" class="preset-tag" onclick="setPreset('input-sets', 3)">3组</button>
-                    <button type="button" class="preset-tag" onclick="setPreset('input-sets', 4)">4组</button>
-                    <button type="button" class="preset-tag" onclick="setPreset('input-sets', 5)">5组</button>
-                  </div>
-                </div>
-              </div>
-
-              <div class="form-row">
-                <label>组外次数 <small>—— 可选，正式组数之外力竭/额外加练的次数</small></label>
-                <div class="stepper-input">
-                  <button type="button" class="step-btn decrease" onclick="adjustValue('input-extra-reps', -1)">-</button>
-                  <input type="number" id="input-extra-reps" value="" placeholder="0" min="0" max="100">
-                  <button type="button" class="step-btn increase" onclick="adjustValue('input-extra-reps', 1)">+</button>
-                </div>
-              </div>
-            </div>
-
-            <!-- 仰卧起坐专属表单组 -->
-            <div class="form-group-set" id="group-situps" style="display: none;">
-              <div class="form-row-grid">
-                <div class="form-row">
-                  <label>每组次数</label>
-                  <div class="stepper-input">
-                    <button type="button" class="step-btn decrease" onclick="adjustValue('input-situps-reps', -5)">-5</button>
-                    <input type="number" id="input-situps-reps" value="15" min="1" max="200">
-                    <button type="button" class="step-btn increase" onclick="adjustValue('input-situps-reps', 5)">+5</button>
-                  </div>
-                </div>
-                <div class="form-row">
-                  <label>组数</label>
-                  <div class="stepper-input">
-                    <button type="button" class="step-btn decrease" onclick="adjustValue('input-situps-sets', -1)">-</button>
-                    <input type="number" id="input-situps-sets" value="3" min="1" max="20">
-                    <button type="button" class="step-btn increase" onclick="adjustValue('input-situps-sets', 1)">+</button>
-                  </div>
-                  <div class="quick-presets">
-                    <button type="button" class="preset-tag" onclick="setPreset('input-situps-sets', 1)">1组</button>
-                    <button type="button" class="preset-tag" onclick="setPreset('input-situps-sets', 2)">2组</button>
-                    <button type="button" class="preset-tag" onclick="setPreset('input-situps-sets', 3)">3组</button>
-                    <button type="button" class="preset-tag" onclick="setPreset('input-situps-sets', 4)">4组</button>
-                    <button type="button" class="preset-tag" onclick="setPreset('input-situps-sets', 5)">5组</button>
-                  </div>
-                </div>
-              </div>
-              <div class="form-row">
-                <label>组外次数 <small>—— 可选，正式组数之外力竭/额外加练的次数</small></label>
-                <div class="stepper-input">
-                  <button type="button" class="step-btn decrease" onclick="adjustValue('input-situps-extra-reps', -1)">-</button>
-                  <input type="number" id="input-situps-extra-reps" value="" placeholder="0" min="0" max="200">
-                  <button type="button" class="step-btn increase" onclick="adjustValue('input-situps-extra-reps', 1)">+</button>
-                </div>
-              </div>
-            </div>
-
-            <!-- 跑步机专属表单组 -->
-            <div class="form-group-set" id="group-treadmill" style="display: none;">
-              <div class="form-row">
-                <label>运动类型</label>
-                <div class="segmented-control">
-                  <label class="segment-item">
-                    <input type="radio" name="treadmill-mode" value="walk" checked onchange="updateCalorieEstimate()">
-                    <span>🚶 快走</span>
-                  </label>
-                  <label class="segment-item">
-                    <input type="radio" name="treadmill-mode" value="run" onchange="updateCalorieEstimate()">
-                    <span>🏃 跑步</span>
-                  </label>
-                </div>
-              </div>
-
-              <div class="form-row-grid">
-                <div class="form-row">
-                  <label>速度 (km/h)</label>
-                  <div class="slider-container">
-                    <input type="range" id="input-treadmill-speed" min="2" max="20" step="0.5" value="6.0" oninput="updateSliderVal('treadmill-speed-val', this.value); updateCalorieEstimate();">
-                    <span class="slider-badge"><span id="treadmill-speed-val">6.0</span> km/h</span>
-                  </div>
-                </div>
-                <div class="form-row">
-                  <label>坡度 (%)</label>
-                  <div class="slider-container">
-                    <input type="range" id="input-treadmill-incline" min="0" max="15" step="1" value="3" oninput="updateSliderVal('treadmill-incline-val', this.value); updateCalorieEstimate();">
-                    <span class="slider-badge"><span id="treadmill-incline-val">3</span> %</span>
-                  </div>
-                </div>
-              </div>
-
-              <div class="form-row-grid">
-                <div class="form-row">
-                  <label>时长 (分钟)</label>
-                  <div class="stepper-input">
-                    <button type="button" class="step-btn decrease" onclick="adjustValue('input-treadmill-time', -5); updateCalorieEstimate();">-5</button>
-                    <input type="number" id="input-treadmill-time" value="30" min="1" max="180" onchange="updateCalorieEstimate()">
-                    <button type="button" class="step-btn increase" onclick="adjustValue('input-treadmill-time', 5); updateCalorieEstimate();">+5</button>
-                  </div>
-                </div>
-                <div class="form-row estimation-output">
-                  <div class="est-box">
-                    <span class="est-label">预计距离</span>
-                    <span class="est-value" id="est-distance">3.00 <small>km</small></span>
-                  </div>
-                  <div class="est-box">
-                    <span class="est-label">预计消耗</span>
-                    <span class="est-value text-glowing" id="est-calories">185 <small>kcal</small></span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- 动感单车专属表单组 -->
-            <div class="form-group-set" id="group-spin-bike" style="display: none;">
-              <div class="form-row-grid">
-                <div class="form-row">
-                  <label>阻力档位 (1-24)</label>
-                  <div class="stepper-input">
-                    <button type="button" class="step-btn decrease" onclick="adjustValue('input-bike-resistance', -1)">-</button>
-                    <input type="number" id="input-bike-resistance" value="8" min="1" max="24">
-                    <button type="button" class="step-btn increase" onclick="adjustValue('input-bike-resistance', 1)">+</button>
-                  </div>
-                </div>
-                <div class="form-row">
-                  <label>骑行时长 (分钟)</label>
-                  <div class="stepper-input">
-                    <button type="button" class="step-btn decrease" onclick="adjustValue('input-bike-time', -5)">-5</button>
-                    <input type="number" id="input-bike-time" value="20" min="1" max="180">
-                    <button type="button" class="step-btn increase" onclick="adjustValue('input-bike-time', 5)">+5</button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- 按摩椅专属表单组 -->
-            <div class="form-group-set" id="group-massage-chair" style="display: none;">
-              <div class="form-row">
-                <label>按摩模式</label>
-                <div class="glass-select-wrapper">
-                  <select id="input-massage-mode">
-                    <option value="自动舒缓">🍀 自动舒缓</option>
-                    <option value="颈肩重点">💆 颈肩重点</option>
-                    <option value="全身拉伸">🧘 全身拉伸</option>
-                    <option value="腰臀放松">🍑 腰臀放松</option>
-                  </select>
-                </div>
-              </div>
-              <div class="form-row-grid">
-                <div class="form-row">
-                  <label>按摩时长</label>
-                  <div class="glass-select-wrapper">
-                    <select id="input-massage-duration">
-                      <option value="15">15 分钟</option>
-                      <option value="30">30 分钟</option>
-                      <option value="45">45 分钟</option>
-                      <option value="60">1 小时</option>
-                      <option value="75">1 小时 15 分</option>
-                      <option value="90">1 小时 30 分</option>
-                      <option value="105">1 小时 45 分</option>
-                      <option value="120">2 小时</option>
-                    </select>
-                  </div>
-                </div>
-                <div class="form-row">
-                  <label>强度级别</label>
-                  <div class="segmented-control">
-                    <label class="segment-item">
-                      <input type="radio" name="massage-intensity" value="1" checked>
-                      <span>弱</span>
-                    </label>
-                    <label class="segment-item">
-                      <input type="radio" name="massage-intensity" value="2">
-                      <span>中</span>
-                    </label>
-                    <label class="segment-item">
-                      <input type="radio" name="massage-intensity" value="3">
-                      <span>强</span>
-                    </label>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- 自定义专属表单组 -->
-            <div class="form-group-set" id="group-custom" style="display: none;">
-              <div class="form-row">
-                <label>运动项目名称</label>
-                <input type="text" id="input-custom-name" placeholder="请输入运动名称 (例如: 哑铃飞鸟)" class="glass-input">
-              </div>
-              <div class="form-row-grid">
-                <div class="form-row">
-                  <label>关键数据 (如重量/次数)</label>
-                  <input type="text" id="input-custom-value" placeholder="例如: 15kg / 12次" class="glass-input">
-                </div>
-                <div class="form-row">
-                  <label>组数 (非必填)</label>
-                  <input type="number" id="input-custom-sets" placeholder="例如: 3" class="glass-input" min="1">
-                </div>
-              </div>
-            </div>
-
-            <!-- 打卡日期 (支持补记过去漏打的卡) -->
-            <div class="form-row">
-              <label>打卡日期 <small>—— 默认今天，也可以选过去的日期补记</small></label>
-              <input type="date" id="input-workout-date" class="glass-input">
-            </div>
-
-            <!-- 通用备注 -->
-            <div class="form-row">
-              <label>运动备注 / 心得</label>
-              <textarea id="input-notes" placeholder="添加备注，如 '今天感觉轻松' 或者是器材编号" class="glass-textarea" rows="2"></textarea>
-            </div>
-
-            <!-- 提交按钮 -->
-            <button type="submit" class="btn btn-submit-workout btn-glowing-glow">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
-              保存本次打卡
-            </button>
-          </form>
-        </div>
-
-        <div class="please-select-hint" id="form-placeholder">
-          <div class="hint-pulse"></div>
-          <p>请在上方点击一个运动项目以开始记录</p>
         </div>
       </section>
 
@@ -578,6 +257,17 @@
           </div>
         </div>
 
+        <!-- 身体数据 (体重 / 臂围 / 腰围 / 胸围) -->
+        <div class="glass body-metrics-card">
+          <div class="chart-header">
+            <h3>身体数据</h3>
+            <span class="chart-subtitle">体重 / 臂围 / 腰围 / 胸围</span>
+          </div>
+          <div class="body-metrics-content" id="body-metrics-content">
+            <!-- 由 JS 渲染最新数值与趋势 -->
+          </div>
+        </div>
+
         <!-- 恢复进度 -->
         <div class="glass recovery-card">
           <div class="chart-header">
@@ -624,7 +314,7 @@
       <section id="view-ai" class="app-view">
         <div class="view-header">
           <h2>AI 智能健身顾问</h2>
-          <p>结合你的打卡数据，让 Gemini 给你针对性的健身建议</p>
+          <p>结合你的打卡数据，让 AI 教练给你针对性的健身建议</p>
         </div>
 
         <!-- 模式选择首页 (未选择模式时显示) -->
@@ -721,11 +411,11 @@
         <div class="glass settings-card">
           <h3>👤 个人身体配置</h3>
           <div class="form-row">
-            <label>体重 (kg) <small>—— 用于精确估算跑步机等有氧消耗</small></label>
+            <label>体重 (kg) <small>—— 精确到小数点后一位，用于精确估算跑步机等有氧消耗</small></label>
             <div class="stepper-input">
-              <button type="button" class="step-btn decrease" onclick="adjustValue('setting-weight', -1)">-</button>
-              <input type="number" id="setting-weight" value="70" min="30" max="250" onchange="saveSettings()">
-              <button type="button" class="step-btn increase" onclick="adjustValue('setting-weight', 1)">+</button>
+              <button type="button" class="step-btn decrease" onclick="adjustValue('setting-weight', -0.5)">-</button>
+              <input type="number" id="setting-weight" value="70.0" min="30" max="250" step="0.1" onchange="saveSettings()">
+              <button type="button" class="step-btn increase" onclick="adjustValue('setting-weight', 0.5)">+</button>
             </div>
           </div>
         </div>
@@ -733,20 +423,29 @@
         <!-- AI 配置卡 -->
         <div class="glass settings-card">
           <h3>🤖 AI 健身教练配置</h3>
-          <p class="settings-desc">本工具直连 Google Gemini API，无需后端。您的 API Key 仅保存在本地浏览器中。</p>
+          <p class="settings-desc">默认直连 <strong>Anthropic Claude</strong>（推理与结构化输出更强，更适合训练菜单与恢复分析），也可切换回 Google Gemini。API Key 仅保存在本地浏览器中，不上传任何服务器。</p>
           <div class="form-row">
-            <label>Gemini API Key</label>
-            <input type="password" id="setting-api-key" placeholder="AIzaSy..." class="glass-input" onchange="saveSettings()">
+            <label>AI 模型提供方</label>
+            <div class="glass-select-wrapper">
+              <select id="setting-api-provider" onchange="onProviderChange()">
+                <option value="claude">Claude (Anthropic，推荐)</option>
+                <option value="gemini">Gemini (Google)</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <label id="setting-api-key-label">Claude API Key</label>
+            <input type="password" id="setting-api-key" placeholder="sk-ant-..." class="glass-input" onchange="saveSettings()">
           </div>
           <div class="form-row">
             <label>模型选择</label>
             <div class="glass-select-wrapper">
               <select id="setting-api-model" onchange="saveSettings()">
-                <option value="gemini-2.5-flash">Gemini 2.5 Flash (速度快，推荐)</option>
-                <option value="gemini-2.5-pro">Gemini 2.5 Pro (推理能力强)</option>
+                <!-- 由 JS 根据提供方动态填充 -->
               </select>
             </div>
           </div>
+          <p class="settings-desc" id="setting-api-hint" style="margin-top: 8px;">在 <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Anthropic 控制台</a> 申请 Claude API Key。</p>
         </div>
 
         <!-- GitHub 自动云端同步 -->
@@ -837,6 +536,6 @@
     <div class="pr-toast" id="pr-toast"></div>
   </div>
 
-  <script src="app.js?v=1.4.0"></script>
+  <script src="app.js?v=1.5.0"></script>
 </body>
 </html>
